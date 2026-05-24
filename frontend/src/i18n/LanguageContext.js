@@ -1,0 +1,120 @@
+import { createContext, useContext, useMemo, useState } from 'react';
+
+const translations = {
+  np: {
+    appName: 'RecycleSathi',
+    tagline: 'फोहोरलाई मूल्यमा बदल्नुस्',
+    english: 'English',
+    nepali: 'नेपाली',
+    getStarted: 'सुरु गर्नुहोस्',
+    sendOtp: 'OTP पठाउनुहोस्',
+    verifyOtp: 'OTP प्रमाणित गर्नुहोस्',
+    resendOtp: 'OTP फेरि पठाउनुहोस्',
+    home: 'होम',
+    scan: 'स्क्यान',
+    history: 'इतिहास',
+    rewards: 'रिवार्ड्स',
+    profile: 'प्रोफाइल',
+    jobs: 'जबस',
+    map: 'नक्सा',
+    earnings: 'आम्दानी',
+    overview: 'ओभरभ्यू',
+    analytics: 'विश्लेषण',
+    users: 'प्रयोगकर्ता',
+    collectors: 'कबाडी',
+    scrapRates: 'दर',
+    settings: 'सेटिङ्स',
+    offline: 'अफलाइन मोड: इन्टरनेट जाँच गर्नुहोस्',
+    tryAgain: 'फेरि प्रयास गर्नुहोस्',
+    noData: 'देखाउन डाटा छैन',
+    todayEarnings: 'आजको आम्दानी',
+    schedulePickup: 'पिकअप सेड्युल',
+    scrapPrices: 'स्क्र्याप दर',
+    myRewards: 'मेरो रिवार्ड्स',
+    userApp: 'User App',
+    collectorApp: 'Collector App',
+    adminDashboard: 'Admin Dashboard',
+    rolePickerTitle: 'फ्रन्टेन्ड मोड छान्नुहोस्',
+    rolePickerSubtitle: 'प्रयोगकर्ता, कबाडी, वा एडमिन अनुभव हेर्नुहोस्',
+    welcomeTitle: 'RecycleSathi',
+    welcomeSubtitle: 'फोहोरलाई मूल्यमा बदल्नुस्',
+    welcomeGoalLabel: 'दिगो लक्ष्य',
+    welcomeGoalText: '१० हजारभन्दा बढी eco-warriors सँग आजै जोडिनुहोस्',
+    login: 'लग इन',
+    signUp: 'साइन अप',
+    builtForEarth: 'Version 2.4.0 • Built for Earth',
+    loginTitle: 'फोन OTP लगइन',
+    phone: 'फोन नम्बर',
+    confirmPickup: 'पिकअप निश्चित गर्नुहोस्',
+    completePickup: 'पिकअप पूरा गर्नुहोस्',
+    available: 'उपलब्ध',
+  },
+  en: {
+    appName: 'RecycleSathi',
+    tagline: 'Turn Waste into Value',
+    english: 'English',
+    nepali: 'Nepali',
+    getStarted: 'Get Started',
+    sendOtp: 'Send OTP',
+    verifyOtp: 'Verify OTP',
+    resendOtp: 'Resend OTP',
+    home: 'Home',
+    scan: 'Scan',
+    history: 'History',
+    rewards: 'Rewards',
+    profile: 'Profile',
+    jobs: 'Jobs',
+    map: 'Map',
+    earnings: 'Earnings',
+    overview: 'Overview',
+    analytics: 'Analytics',
+    users: 'Users',
+    collectors: 'Collectors',
+    scrapRates: 'Scrap Rates',
+    settings: 'Settings',
+    offline: 'Offline mode: check your internet connection',
+    tryAgain: 'Try Again',
+    noData: 'No data to display',
+    todayEarnings: "Today's Earnings",
+    schedulePickup: 'Schedule Pickup',
+    scrapPrices: 'Scrap Prices',
+    myRewards: 'My Rewards',
+    userApp: 'User App',
+    collectorApp: 'Collector App',
+    adminDashboard: 'Admin Dashboard',
+    rolePickerTitle: 'Choose frontend mode',
+    rolePickerSubtitle: 'Preview user, collector, or admin experiences',
+    welcomeTitle: 'RecycleSathi',
+    welcomeSubtitle: 'Turn Waste Into Value',
+    welcomeGoalLabel: 'Sustainable Goal',
+    welcomeGoalText: 'Join 10k+ eco-warriors today',
+    login: 'Log In',
+    signUp: 'Sign Up',
+    builtForEarth: 'Version 2.4.0 • Built for Earth',
+    loginTitle: 'Phone OTP Login',
+    phone: 'Phone Number',
+    confirmPickup: 'Confirm Pickup',
+    completePickup: 'Complete Pickup',
+    available: 'Available',
+  },
+};
+
+const LanguageContext = createContext(null);
+
+export function LanguageProvider({ children }) {
+  const [language, setLanguage] = useState('np');
+
+  const value = useMemo(() => ({
+    language,
+    setLanguage,
+    t: (key) => translations[language]?.[key] || key,
+  }), [language]);
+
+  return <LanguageContext.Provider value={value}>{children}</LanguageContext.Provider>;
+}
+
+export function useTranslation() {
+  const context = useContext(LanguageContext);
+  if (!context) throw new Error('useTranslation must be used within LanguageProvider');
+  return context;
+}
