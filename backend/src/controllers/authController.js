@@ -42,7 +42,20 @@ exports.registerUser = async (req, res) => {
 
     // If the user is a collector, create a corresponding collector document
     if (role === 'collector') {
-      const newCollector = new Collector({ user_id: newUser._id });
+      const newCollector = new Collector({
+        name,
+        email,
+        phone,
+        passwordHash: hashedPassword,
+        location: {
+          lat: null,
+          lng: null,
+        },
+        rating: 5.0,
+        isAvailable: true,
+        createdAt: new Date(),
+      });
+
       await newCollector.save();
     }
 

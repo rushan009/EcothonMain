@@ -1,15 +1,18 @@
 const mongoose = require('mongoose');
 
 const collectorSchema = new mongoose.Schema({
-  user_id: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  vehicle_type: String,
-  rating: { type: Number, default: 0 },
-  active_status: { type: Boolean, default: true },
+  name: { type: String, required: true },
+  phone: { type: String, required: true },
+  email: { type: String, required: true },
+  passwordHash: { type: String, required: true },
   location: {
-    lat: Number,
-    lng: Number
-  }
-}, { timestamps: true });
+    lat: { type: Number, default: null },
+    lng: { type: Number, default: null },
+  },
+  rating: { type: Number, default: 5.0 },
+  isAvailable: { type: Boolean, default: true },
+  createdAt: { type: Date, default: Date.now },
+});
 
 const Collector = mongoose.model('Collector', collectorSchema);
 

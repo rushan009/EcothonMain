@@ -1,5 +1,4 @@
 export { default as CollectorNavigator } from './CollectorNavigator';
-export { default as CollectorLoginScreen } from './CollectorLoginScreen';
 export { default as CollectorDashboardScreen } from './CollectorDashboardScreen';
 export { default as CollectorActivePickupScreen } from './CollectorActivePickupScreen';
 export { default as CollectorEarningsScreen } from './CollectorEarningsScreen';

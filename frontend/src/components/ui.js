@@ -259,7 +259,7 @@ export function ScreenEnter({ children }) {
   }, [anim]);
 
   return (
-    <Animated.View style={{ opacity: anim, transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }] }}>
+    <Animated.View style={[{ flex: 1, opacity: anim, transform: [{ translateY: anim.interpolate({ inputRange: [0, 1], outputRange: [16, 0] }) }] }]}>
       {children}
     </Animated.View>
   );

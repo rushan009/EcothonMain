@@ -3,7 +3,7 @@ const cors = require('cors');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
 // Simple request logger for debugging API errors (method, path, body)
 app.use((req, res, next) => {
 	try {
@@ -32,6 +32,8 @@ app.use((req, res, next) => {
 
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/user', require('./routes/user'));
+app.use('/api/pickup', require('./routes/pickup'));
+app.use('/api/waste', require('./routes/waste'));
 // Health check for quick reachability tests
 app.get('/health', (req, res) => {
 	res.json({ status: 'ok', timestamp: Date.now() });
