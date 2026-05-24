@@ -13,6 +13,15 @@ const collectorSchema = new mongoose.Schema({
   },
   rating: { type: Number, default: 5.0 },
   isAvailable: { type: Boolean, default: true },
+  totalEarnings: { type: Number, default: 0 },
+  totalWeightCollected: { type: Number, default: 0 },
+  paymentHistory: [{
+    pickupId: { type: mongoose.Schema.Types.ObjectId, ref: 'PickupRequest' },
+    finalAmount: Number,
+    weight: Number,
+    paymentMethod: String,
+    paidAt: { type: Date, default: Date.now },
+  }],
   createdAt: { type: Date, default: Date.now },
 });
 

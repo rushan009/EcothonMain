@@ -248,8 +248,9 @@ export function CollectorActivePickupScreen({ navigation, route }) {
 
     setBusy(true);
     try {
-      await endpoints.acceptPickup(request._id);
-      navigation.navigate('CollectorRoutes', { request: { ...request, status: 'accepted' } });
+      const response = await endpoints.acceptPickup(request._id);
+      const acceptedPickup = response?.data?.pickup || request;
+      navigation.navigate('CollectorLiveTracking', { request: { ...request, ...acceptedPickup, status: 'accepted' } });
     } finally {
       setBusy(false);
     }

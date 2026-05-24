@@ -45,10 +45,24 @@ function formatAddress(geocode) {
   return parts.join(', ');
 }
 
+function normalizeScrapItems(input) {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return input
+    .filter((item) => item && typeof item.category === 'string' && item.category.trim().length > 0)
+    .map((item) => ({
+      category: item.category.trim(),
+      icon: typeof item.icon === 'string' && item.icon.trim().length > 0 ? item.icon.trim() : '♻️',
+    }))
+    .filter((item, index, list) => list.findIndex((candidate) => candidate.category === item.category) === index);
+}
+
 export default function RequestPickupScreen({ navigation, route }) {
   const uploadedImageUrl = route?.params?.imageUrl || null;
 
-  const [selectedItems, setSelectedItems] = useState([]);
+  const [selectedItems, setSelectedItems] = useState(() => normalizeScrapItems(route?.params?.scrapTypes));
   const [pickerVisible, setPickerVisible] = useState(false);
   const [mapVisible, setMapVisible] = useState(false);
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -148,16 +162,17 @@ export default function RequestPickupScreen({ navigation, route }) {
     }
 
     setSelectedItems((current) => {
-      if (current.some((item) => item.category === selected.category)) {
-        return current;
+      const normalizedCurrent = normalizeScrapItems(current);
+      if (normalizedCurrent.some((item) => item.category === selected.category)) {
+        return normalizedCurrent;
       }
 
-      return [...current, selected];
+      return [...normalizedCurrent, { category: selected.category, icon: selected.icon }];
     });
   };
 
   const removeCategory = (category) => {
-    setSelectedItems((current) => current.filter((item) => item.category !== category));
+    setSelectedItems((current) => normalizeScrapItems(current).filter((item) => item.category !== category));
   };
 
   const applyPickedLocation = async () => {
@@ -203,8 +218,15 @@ export default function RequestPickupScreen({ navigation, route }) {
     setIsSubmitting(true);
 
     try {
+      const sanitizedItems = normalizeScrapItems(selectedItems);
+
+      if (sanitizedItems.length === 0) {
+        Alert.alert('Missing details', 'Please add at least one scrap type before placing a pickup request.');
+        return;
+      }
+
       await endpoints.createPickup({
-        scrapTypes: selectedItems.map((item) => ({ category: item.category, icon: item.icon })),
+        scrapTypes: sanitizedItems,
         location,
         phone: phoneNumber.trim(),
         estimatedWeight: {

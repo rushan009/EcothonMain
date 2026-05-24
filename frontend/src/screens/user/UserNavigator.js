@@ -7,6 +7,8 @@ import UserPersonalDetailsScreen from './UserPersonalDetailsScreen';
 import ScanScreen from './ScanScreen';
 import RequestPickupScreen from './RequestPickupScreen';
 import MyPickupsScreen from './MyPickupsScreen';
+import UserPaymentScreen from './UserPaymentScreen';
+import PaymentConfirmationScreen from './PaymentConfirmationScreen';
 import { userTabBar } from '../../components/user/UserTabBar';
 
 const Tab = createBottomTabNavigator();
@@ -30,6 +32,8 @@ export default function UserNavigator() {
       <Stack.Screen name="UserTabs" component={Tabs} />
       <Stack.Screen name="RequestPickup" component={RequestPickupScreen} />
       <Stack.Screen name="MyPickups" component={MyPickupsScreen} />
+      <Stack.Screen name="UserPayment" component={UserPaymentScreen} />
+      <Stack.Screen name="PaymentConfirmation" component={PaymentConfirmationScreen} />
       <Stack.Screen name="PersonalDetails" component={UserPersonalDetailsScreen} />
     </Stack.Navigator>
   );

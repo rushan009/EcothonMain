@@ -1,7 +1,7 @@
 import React from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { colors, spacing } from '../../theme/tokens';
+import { colors, spacing, typography } from '../../theme/tokens';
 
 /* ─────────────────────────────────────────
    Dashboard task data
@@ -45,10 +45,14 @@ const NAV_ITEMS = [
 ];
 
 export function CollectorBottomNav({ navigation, activeRoute }) {
+  const navState = navigation?.getState?.();
+  const currentRouteName = navigation?.getCurrentRoute?.()?.name || navState?.routes?.[navState?.index || 0]?.name;
+  const resolvedActiveRoute = activeRoute || currentRouteName || 'CollectorDashboard';
+
   return (
     <View style={styles.bottomNav}>
       {NAV_ITEMS.map((item) => {
-        const isActive = item.route === activeRoute;
+        const isActive = item.route === resolvedActiveRoute;
         return (
           <TouchableOpacity
             key={item.route}
@@ -58,7 +62,7 @@ export function CollectorBottomNav({ navigation, activeRoute }) {
           >
             <MaterialCommunityIcons
               name={item.icon}
-              size={22}
+              size={20}
               color={isActive ? colors.primary : '#9aafA0'}
             />
             <Text style={[styles.navLabel, isActive && styles.navLabelActive]}>
@@ -99,15 +103,12 @@ export const styles = StyleSheet.create({
     flex: 1,
   },
   welcomeGreeting: {
-    fontSize: 11,
+    ...typography.labelSm,
     color: '#5a7a62',
-    fontWeight: '400',
-    letterSpacing: 0.2,
   },
   welcomeName: {
-    fontSize: 16,
+    ...typography.headlineMd,
     color: '#1a3d24',
-    fontWeight: '600',
     marginTop: 1,
   },
   topBarRight: {
@@ -142,10 +143,8 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   avatarText: {
-    fontSize: 12,
-    fontWeight: '600',
+    ...typography.labelSm,
     color: '#ffffff',
-    letterSpacing: 0.5,
   },
 
   /* ── Hero Grid ── */
@@ -166,10 +165,8 @@ export const styles = StyleSheet.create({
 
   /* ── Section Labels ── */
   sectionLabel: {
-    fontSize: 10,
+    ...typography.labelSm,
     color: '#6b8a72',
-    fontWeight: '500',
-    letterSpacing: 0.5,
     textTransform: 'uppercase',
     marginBottom: 8,
   },
@@ -197,8 +194,7 @@ export const styles = StyleSheet.create({
     backgroundColor: '#aaa',
   },
   statusText: {
-    fontSize: 12,
-    fontWeight: '500',
+    ...typography.labelMd,
   },
   statusTextOnline: {
     color: colors.primary,
@@ -217,8 +213,7 @@ export const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   earningsValue: {
-    fontSize: 15,
-    fontWeight: '600',
+    ...typography.bodyLg,
     color: '#1a3d24',
   },
   earningsIconBubble: {
@@ -239,17 +234,15 @@ export const styles = StyleSheet.create({
     marginBottom: 10,
   },
   sectionTitle: {
-    fontSize: 13,
-    fontWeight: '600',
+    ...typography.headlineMd,
     color: '#1a3d24',
   },
   sectionTitleSmall: {
-    fontSize: 12,
-    fontWeight: '600',
+    ...typography.labelMd,
     color: '#1a3d24',
   },
   sectionMeta: {
-    fontSize: 11,
+    ...typography.labelSm,
     color: colors.primary,
     backgroundColor: '#e0f0e6',
     paddingHorizontal: 9,
@@ -284,10 +277,8 @@ export const styles = StyleSheet.create({
     borderBottomRightRadius: 6,
   },
   featuredBadgeText: {
-    fontSize: 9,
-    fontWeight: '600',
+    ...typography.labelSm,
     color: '#ffffff',
-    letterSpacing: 0.4,
   },
   requestTopRow: {
     flexDirection: 'row',
@@ -314,15 +305,13 @@ export const styles = StyleSheet.create({
     flex: 1,
   },
   requestDistance: {
-    fontSize: 11,
+    ...typography.labelSm,
     color: '#5a7a62',
   },
   requestArea: {
-    fontSize: 12,
-    fontWeight: '500',
+    ...typography.bodyMd,
     color: '#1a3d24',
     marginTop: 1,
-    lineHeight: 17,
   },
   payoutBlock: {
     alignItems: 'flex-end',
@@ -330,12 +319,11 @@ export const styles = StyleSheet.create({
     marginLeft: 8,
   },
   payoutLabel: {
-    fontSize: 10,
+    ...typography.labelSm,
     color: '#6b8a72',
   },
   payoutValue: {
-    fontSize: 14,
-    fontWeight: '600',
+    ...typography.bodyLg,
     color: '#1a3d24',
   },
 
@@ -358,7 +346,7 @@ export const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   tagText: {
-    fontSize: 11,
+    ...typography.labelSm,
     color: '#2d5a38',
   },
 
@@ -369,10 +357,8 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
   },
   primaryActionText: {
-    fontSize: 12,
-    fontWeight: '600',
+    ...typography.labelSm,
     color: '#ffffff',
-    letterSpacing: 0.3,
   },
 
   /* ── Tasks Card ── */
@@ -395,8 +381,7 @@ export const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   progressText: {
-    fontSize: 9,
-    fontWeight: '600',
+    ...typography.labelSm,
     color: '#1a3d24',
   },
 
@@ -450,8 +435,7 @@ export const styles = StyleSheet.create({
     paddingBottom: 14,
   },
   timelineTitle: {
-    fontSize: 12,
-    fontWeight: '500',
+    ...typography.labelMd,
     color: '#1a3d24',
   },
   timelineTitleActive: {
@@ -461,7 +445,7 @@ export const styles = StyleSheet.create({
     color: '#8aaa92',
   },
   timelineSubtitle: {
-    fontSize: 11,
+    ...typography.labelSm,
     color: '#8aaa92',
     marginTop: 2,
   },
@@ -486,7 +470,7 @@ export const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   navLabel: {
-    fontSize: 10,
+    ...typography.labelSm,
     color: '#9aafa0',
   },
   navLabelActive: {

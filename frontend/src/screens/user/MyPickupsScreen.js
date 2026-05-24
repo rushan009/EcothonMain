@@ -10,6 +10,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import MapView, { Marker, Polyline, UrlTile } from 'react-native-maps';
 import { endpoints } from '../../api/client';
@@ -39,7 +40,11 @@ function timeAgo(inputDate) {
 
 function statusMeta(status) {
   if (status === 'accepted') {
-    return { label: '🟢 Confirmed', color: '#166534', bg: '#DCFCE7' };
+    return { label: '🟢 Coming', color: '#166534', bg: '#DCFCE7' };
+  }
+
+  if (status === 'arrived') {
+    return { label: '🟠 Arrived', color: '#92400E', bg: '#FEF3C7' };
   }
 
   if (status === 'completed') {
@@ -121,6 +126,16 @@ function normalizeCoordinates(input) {
   return { latitude, longitude };
 }
 
+function sanitizeRouteCoordinates(input) {
+  if (!Array.isArray(input)) {
+    return [];
+  }
+
+  return input
+    .map((point) => normalizeCoordinates(point))
+    .filter(Boolean);
+}
+
 function PickupRoutePreview({ pickup }) {
   const [routeCoordinates, setRouteCoordinates] = useState([]);
   const [etaMinutes, setEtaMinutes] = useState(null);
@@ -158,9 +173,35 @@ function PickupRoutePreview({ pickup }) {
     const startPoint = collectorLocation;
     const endPoint = pickupPoint;
 
-    if (startPoint && endPoint) {
-      setRouteCoordinates([startPoint, endPoint]);
-      setEtaMinutes(estimateEtaFromPoints(startPoint, endPoint));
+    const safePickupRoute = sanitizeRouteCoordinates(pickup?.route);
+
+    // Only update if coordinates actually changed
+    if (safePickupRoute.length > 1) {
+      setRouteCoordinates((prev) => {
+        const next = safePickupRoute;
+        if (JSON.stringify(prev) !== JSON.stringify(next)) {
+          return next;
+        }
+        return prev;
+      });
+      setEtaMinutes((prev) => {
+        const newEta = pickup.routeDuration ? pickup.routeDuration / 60 : estimateEtaFromPoints(startPoint, endPoint);
+        if (prev !== newEta) return newEta;
+        return prev;
+      });
+    } else if (startPoint && endPoint) {
+      setRouteCoordinates((prev) => {
+        const newCoords = [startPoint, endPoint];
+        if (JSON.stringify(prev) !== JSON.stringify(newCoords)) {
+          return newCoords;
+        }
+        return prev;
+      });
+      setEtaMinutes((prev) => {
+        const newEta = estimateEtaFromPoints(startPoint, endPoint);
+        if (prev !== newEta) return newEta;
+        return prev;
+      });
     }
 
     const loadRoute = async () => {
@@ -177,12 +218,14 @@ function PickupRoutePreview({ pickup }) {
         const route = data?.routes?.[0] || null;
         const geometry = route?.geometry?.coordinates || [];
 
-        if (!mounted || geometry.length === 0) {
+        if (!mounted || !Array.isArray(geometry) || geometry.length === 0) {
           return;
         }
 
-        if (geometry.length > 1) {
-          setRouteCoordinates(geometry.map(([longitude, latitude]) => ({ latitude, longitude })));
+        const nextRoute = sanitizeRouteCoordinates(geometry.map(([longitude, latitude]) => ({ latitude, longitude })));
+
+        if (nextRoute.length > 1) {
+          setRouteCoordinates(nextRoute);
         }
 
         if (route?.duration) {
@@ -198,7 +241,7 @@ function PickupRoutePreview({ pickup }) {
     return () => {
       mounted = false;
     };
-  }, [collectorLocation, pickupPoint]);
+  }, [collectorLocation, pickupPoint, pickup?.route, pickup?.routeDuration]);
 
   const displayCoordinates = useMemo(() => {
     if (routeCoordinates.length > 1) {
@@ -214,7 +257,7 @@ function PickupRoutePreview({ pickup }) {
   }, [collectorLocation, pickupPoint, routeCoordinates]);
 
   useEffect(() => {
-    if (!mapRef.current || displayCoordinates.length < 2) {
+    if (!mapRef.current || typeof mapRef.current.fitToCoordinates !== 'function' || displayCoordinates.length < 2) {
       return;
     }
 
@@ -310,7 +353,7 @@ function PickupRoutePreview({ pickup }) {
 
           <View style={styles.collectorMetaItem}>
             <Text style={styles.collectorMetaLabel}>Status</Text>
-            <Text style={styles.collectorMetaValue}>{pickup.status === 'accepted' ? 'Accepted' : statusMeta(pickup.status).label}</Text>
+            <Text style={styles.collectorMetaValue}>{pickup.status === 'accepted' ? 'Coming' : statusMeta(pickup.status).label}</Text>
           </View>
         </View>
 
@@ -344,9 +387,11 @@ export default function MyPickupsScreen({ navigation }) {
 
   const visiblePickups = useMemo(() => pickups.filter((pickup) => pickup.status !== 'cancelled'), [pickups]);
 
-  useEffect(() => {
-    loadPickups();
-  }, [loadPickups]);
+  useFocusEffect(
+    useCallback(() => {
+      loadPickups();
+    }, [loadPickups])
+  );
 
   useEffect(() => {
     let mounted = true;
@@ -357,6 +402,20 @@ export default function MyPickupsScreen({ navigation }) {
       if (!socket || !mounted) {
         return;
       }
+
+      const handleCreated = (pickup) => {
+        if (!pickup?._id) {
+          return;
+        }
+
+        setPickups((current) => {
+          if (current.some((item) => item._id === pickup._id)) {
+            return current.map((item) => (item._id === pickup._id ? { ...item, ...pickup } : item));
+          }
+
+          return [{ ...pickup }, ...current];
+        });
+      };
 
       const handleStatusChanged = (pickup) => {
         if (!pickup?._id) {
@@ -389,6 +448,8 @@ export default function MyPickupsScreen({ navigation }) {
               ...pickup,
               status: payload.status || 'accepted',
               collectorLocation: payload.collectorLocation || pickup.collectorLocation || null,
+              route: payload.route || pickup.route || null,
+              routeDuration: payload.routeDuration || pickup.routeDuration || null,
               collector: mergedCollector || pickup.collector || null,
               collectorId: mergedCollector || pickup.collectorId,
               collectorName: payload.collector?.name || pickup.collectorName,
@@ -423,8 +484,10 @@ export default function MyPickupsScreen({ navigation }) {
 
           return {
             ...pickup,
-            status: payload.status || pickup.status,
-            collectorLocation: payload.collectorLocation,
+              status: payload.status || pickup.status,
+              collectorLocation: payload.collectorLocation,
+              route: payload.route || pickup.route || null,
+              routeDuration: payload.routeDuration || pickup.routeDuration || null,
             collector: mergedCollector || pickup.collector || null,
             collectorId: mergedCollector || pickup.collectorId,
             collectorName: payload.collector?.name || pickup.collectorName,
@@ -434,14 +497,50 @@ export default function MyPickupsScreen({ navigation }) {
         }));
       };
 
+      const handleCollectorArrived = (payload) => {
+        if (!payload?.requestId) {
+          return;
+        }
+
+        setPickups((current) => current.map((pickup) => (
+          pickup._id === payload.requestId
+            ? { ...pickup, status: 'arrived' }
+            : pickup
+        )));
+      };
+
+      const handlePaymentCompleted = (payload) => {
+        if (!payload?.requestId) {
+          return;
+        }
+
+        setPickups((current) => current.map((pickup) => (
+          pickup._id === payload.requestId
+            ? { ...pickup, status: 'completed' }
+            : pickup
+        )));
+
+        navigation.navigate('PaymentConfirmation', {
+          finalAmount: payload.finalAmount,
+          weight: payload.weight,
+          ecoPointsEarned: payload.ecoPointsEarned,
+        });
+      };
+
+      socket.on('pickup_created', handleCreated);
       socket.on('pickup_accepted', handleAccepted);
       socket.on('pickup_status_changed', handleStatusChanged);
       socket.on('pickup_location_updated', handleLocationUpdate);
+      socket.on('collector_arrived', handleCollectorArrived);
+      socket.on('payment_completed', handlePaymentCompleted);
 
       return () => {
+        socket.off('pickup_created', handleCreated);
         socket.off('pickup_accepted', handleAccepted);
         socket.off('pickup_status_changed', handleStatusChanged);
         socket.off('pickup_location_updated', handleLocationUpdate);
+        socket.off('collector_arrived', handleCollectorArrived);
+        socket.off('payment_completed', handlePaymentCompleted);
       };
     };
 
@@ -518,8 +617,26 @@ export default function MyPickupsScreen({ navigation }) {
               <Text style={styles.noteLabel}>Collector note</Text>
               <Text style={styles.noteText}>{pickup.note || 'No note added.'}</Text>
 
-              {pickup.status === 'accepted' && (pickup.collectorLocation || pickup.collectorId?.location) ? (
+              {(pickup.status === 'accepted' || pickup.status === 'arrived') && (pickup.collectorLocation || pickup.collectorId?.location) ? (
                 <PickupRoutePreview pickup={pickup} />
+              ) : null}
+
+              {pickup.status === 'arrived' ? (
+                <View style={styles.arrivedActions}>
+                  <Pressable
+                    style={styles.qrActionButton}
+                    onPress={() => navigation.navigate('UserPayment', { request: pickup })}
+                  >
+                    <Text style={styles.qrActionText}>📱 Give QR</Text>
+                  </Pressable>
+
+                  <Pressable
+                    style={styles.cashActionButton}
+                    onPress={() => Alert.alert('Cash payment', 'Cash payment is not available in this flow yet.')}
+                  >
+                    <Text style={styles.cashActionText}>💵 Cash</Text>
+                  </Pressable>
+                </View>
               ) : null}
 
               {pickup.status === 'pending' ? (
@@ -776,6 +893,35 @@ const styles = StyleSheet.create({
   },
   collectorCallButtonText: {
     color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  arrivedActions: {
+    marginTop: 14,
+    flexDirection: 'row',
+    gap: 12,
+  },
+  qrActionButton: {
+    flex: 1,
+    backgroundColor: PRIMARY_GREEN,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+  },
+  qrActionText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+  },
+  cashActionButton: {
+    flex: 1,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+  },
+  cashActionText: {
+    color: '#111827',
     fontWeight: '800',
   },
   cancelButton: {

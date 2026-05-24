@@ -25,7 +25,19 @@ const userSchema = new mongoose.Schema(
       enum: ["user", "collector", "admin"],
       default: "user",
     },
+    khaltiNumber: {
+      type: String,
+      default: "",
+    },
     ecoPoints: {
+      type: Number,
+      default: 0,
+    },
+    totalEarnings: {
+      type: Number,
+      default: 0,
+    },
+    totalWeightRecycled: {
       type: Number,
       default: 0,
     },

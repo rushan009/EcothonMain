@@ -1,5 +1,6 @@
 const { Server } = require('socket.io');
 const jwt = require('jsonwebtoken');
+const { Types } = require('mongoose');
 const PickupRequest = require('./models/PickupRequest');
 const Collector = require('./models/Collector');
 
@@ -24,8 +25,10 @@ async function getCollectorForSocketUser(user) {
     return null;
   }
 
+  const userIdFilter = Types.ObjectId.isValid(user.sub) ? new Types.ObjectId(user.sub) : user.sub;
+
   const existingCollector = await Collector.findOne({
-    $or: [{ userId: user.sub }, { email: user.email }, { phone: user.phone }],
+    $or: [{ userId: userIdFilter }, { email: user.email }, { phone: user.phone }],
   });
 
   if (existingCollector) {
@@ -33,7 +36,7 @@ async function getCollectorForSocketUser(user) {
   }
 
   return Collector.create({
-    userId: user.sub,
+    userId: userIdFilter,
     name: user.name || 'Collector',
     company: user.company || null,
     email: user.email,
@@ -63,7 +66,17 @@ module.exports = function registerSocket(server) {
 
     if (user?.role === 'collector') {
       socket.join('collectors');
-      socket.join(`collector:${user.sub}`);
+
+      void (async () => {
+        try {
+          const collector = await getCollectorForSocketUser(user);
+          if (collector?._id) {
+            socket.join(`collector:${collector._id.toString()}`);
+          }
+        } catch (error) {
+          console.warn('[socket] unable to join collector room', error?.message || error);
+        }
+      })();
     }
 
     socket.on('pickup_location_update', async (payload) => {
@@ -102,6 +115,25 @@ module.exports = function registerSocket(server) {
         await request.save();
         await request.populate('collectorId', 'name phone company rating location');
 
+        let serverRoute = null;
+        if (request.location && request.collectorLocation) {
+          try {
+            const url = `https://router.project-osrm.org/route/v1/driving/${request.collectorLocation.longitude},${request.collectorLocation.latitude};${request.location.lng},${request.location.lat}?overview=full&geometries=geojson`;
+            const resp = await fetch(url);
+            const data = await resp.json();
+            const route = data?.routes?.[0] || null;
+
+            if (route && Array.isArray(route.geometry?.coordinates) && route.geometry.coordinates.length > 0) {
+              serverRoute = {
+                coordinates: route.geometry.coordinates.map(([lng, lat]) => ({ latitude: lat, longitude: lng })),
+                duration: route.duration,
+              };
+            }
+          } catch (err) {
+            console.warn('[osrm] live route compute failed', err?.message || err);
+          }
+        }
+
         io.to(`user:${request.userId.toString()}`).emit('pickup_location_updated', {
           requestId: request._id.toString(),
           collectorLocation: request.collectorLocation,
@@ -118,6 +150,8 @@ module.exports = function registerSocket(server) {
               longitude: request.collectorLocation.longitude,
             },
           } : null,
+          route: serverRoute?.coordinates || null,
+          routeDuration: serverRoute?.duration || null,
         });
       } catch (error) {
         console.warn('[socket] pickup_location_update failed:', error?.message || error);

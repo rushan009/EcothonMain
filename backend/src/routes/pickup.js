@@ -33,6 +33,25 @@ const upload = multer({
   },
 });
 
+async function computeOsrmRoute(startLat, startLng, endLat, endLng) {
+  try {
+    const url = `https://router.project-osrm.org/route/v1/driving/${startLng},${startLat};${endLng},${endLat}?overview=full&geometries=geojson`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    const route = data?.routes?.[0] || null;
+
+    if (!route || !Array.isArray(route.geometry?.coordinates) || route.geometry.coordinates.length === 0) {
+      return null;
+    }
+
+    const coordinates = route.geometry.coordinates.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
+    return { coordinates, duration: route.duration };
+  } catch (error) {
+    console.warn('[osrm] route compute failed', error?.message || error);
+    return null;
+  }
+}
+
 function requireRole(roleToCheck) {
   return (req, res, next) => {
     const role = req.user?.role;
@@ -122,6 +141,23 @@ function buildOfferEstimate(pickup) {
   };
 }
 
+function calculateKhaltiAmount(weightInput, weightUnit) {
+  const parsedWeight = Number(weightInput);
+
+  if (!Number.isFinite(parsedWeight) || parsedWeight <= 0) {
+    return null;
+  }
+
+  const weightInKg = weightUnit === 'gram' ? parsedWeight / 1000 : parsedWeight;
+  const finalAmount = Math.round(weightInKg * 20);
+
+  return {
+    weightInKg,
+    finalAmount,
+    finalAmountPaisa: finalAmount * 100,
+  };
+}
+
 function serializePickup(pickup) {
   const plain = typeof pickup?.toObject === 'function' ? pickup.toObject() : pickup;
   const userDoc = plain.userId && typeof plain.userId === 'object' ? plain.userId : null;
@@ -154,6 +190,11 @@ function serializePickup(pickup) {
     collectorPhone: collectorDoc?.phone || plain.collectorPhone || null,
     collectorCompany: collectorDoc?.company || plain.collectorCompany || 'EcoSathi Collector Team',
     collectorLocation,
+    weight: plain.weight ?? null,
+    finalAmount: plain.finalAmount ?? null,
+    finalAmountPaisa: plain.finalAmountPaisa ?? null,
+    paymentMethod: plain.paymentMethod ?? null,
+    paymentStatus: plain.paymentStatus ?? 'pending',
     offer: buildOfferEstimate(plain),
   };
 }
@@ -327,6 +368,12 @@ router.post('/accept/:requestId', requireAuth, requireRole(['collector']), async
 
     if (io) {
       emitPickupUpdate(io, request);
+
+      let serverRoute = null;
+      if (request.collectorLocation && request.location) {
+        serverRoute = await computeOsrmRoute(request.collectorLocation.latitude, request.collectorLocation.longitude, request.location.lat, request.location.lng);
+      }
+
       io.to(`user:${request.userId.toString()}`).emit('pickup_accepted', {
         requestId: request._id.toString(),
         status: request.status,
@@ -354,6 +401,8 @@ router.post('/accept/:requestId', requireAuth, requireRole(['collector']), async
             longitude: request.collectorId.location.lng,
           } : null,
         } : null,
+        route: serverRoute?.coordinates || null,
+        routeDuration: serverRoute?.duration || null,
       });
     }
 
@@ -393,6 +442,183 @@ router.post('/decline/:requestId', requireAuth, requireRole(['collector']), asyn
   }
 });
 
+router.post('/arrived/:requestId', requireAuth, requireRole(['collector']), async (req, res) => {
+  try {
+    const request = await PickupRequest.findById(req.params.requestId);
+
+    if (!request) {
+      return res.status(404).json({ message: 'Pickup request not found' });
+    }
+
+    if (request.status !== 'accepted') {
+      return res.status(400).json({ message: 'Pickup request must be accepted before it can be marked arrived' });
+    }
+
+    request.status = 'arrived';
+    await request.save();
+    await request.populate('userId', 'name phone khaltiNumber');
+    await request.populate('collectorId', 'name phone company rating location');
+
+    const io = req.app.get('io');
+
+    if (io) {
+      emitPickupUpdate(io, request);
+      io.to(`user:${request.userId.toString()}`).emit('collector_arrived', {
+        requestId: request._id.toString(),
+        status: request.status,
+      });
+    }
+
+    return res.json({ pickup: serializePickup(request) });
+  } catch (error) {
+    console.error('Error marking pickup arrived:', error);
+    return res.status(500).json({ message: 'Unable to mark pickup as arrived' });
+  }
+});
+
+router.post('/set-weight/:requestId', requireAuth, async (req, res) => {
+  try {
+    const { weight, weightUnit } = req.body || {};
+    const payment = calculateKhaltiAmount(weight, weightUnit);
+
+    if (!payment) {
+      return res.status(400).json({ message: 'weight and weightUnit are required' });
+    }
+
+    const request = await PickupRequest.findById(req.params.requestId);
+
+    if (!request) {
+      return res.status(404).json({ message: 'Pickup request not found' });
+    }
+
+    if (request.userId.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ message: 'You can only update your own pickup weight' });
+    }
+
+    if (!['accepted', 'arrived'].includes(request.status)) {
+      return res.status(400).json({ message: 'Pickup must be accepted before weight can be set' });
+    }
+
+    const user = await require('../models/User').findById(request.userId);
+    const userKhaltiNumber = user?.khaltiNumber || user?.phone || '';
+    const qrValue = `khalti://pay?to=${encodeURIComponent(userKhaltiNumber)}&amount=${payment.finalAmountPaisa}`;
+
+    request.weight = payment.weightInKg;
+    request.finalAmount = payment.finalAmount;
+    request.finalAmountPaisa = payment.finalAmountPaisa;
+    request.paymentMethod = 'khalti';
+    request.paymentStatus = 'pending';
+    request.status = 'arrived';
+    await request.save();
+    await request.populate('collectorId', 'name phone company rating location');
+
+    const io = req.app.get('io');
+
+    if (io && request.collectorId) {
+      io.to(`collector:${request.collectorId.toString()}`).emit('weight_set', {
+        requestId: request._id.toString(),
+        weight: request.weight,
+        finalAmount: request.finalAmount,
+        finalAmountPaisa: request.finalAmountPaisa,
+        qrValue,
+      });
+      emitPickupUpdate(io, request);
+    }
+
+    return res.json({
+      weight: request.weight,
+      finalAmount: request.finalAmount,
+      finalAmountPaisa: request.finalAmountPaisa,
+      qrValue,
+    });
+  } catch (error) {
+    console.error('Error setting pickup weight:', error);
+    return res.status(500).json({ message: 'Unable to set pickup weight' });
+  }
+});
+
+router.post('/payment-complete/:requestId', requireAuth, requireRole(['collector']), async (req, res) => {
+  try {
+    const { finalAmount } = req.body || {};
+    const request = await PickupRequest.findById(req.params.requestId);
+
+    if (!request) {
+      return res.status(404).json({ message: 'Pickup request not found' });
+    }
+
+    if (!['arrived', 'accepted'].includes(request.status)) {
+      return res.status(400).json({ message: 'Pickup must be arrived before payment can be completed' });
+    }
+
+    if (!request.weight) {
+      return res.status(400).json({ message: 'Weight must be set before payment can be completed' });
+    }
+
+    const paymentAmount = Number(finalAmount ?? request.finalAmount);
+
+    if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) {
+      return res.status(400).json({ message: 'finalAmount is required' });
+    }
+
+    request.finalAmount = paymentAmount;
+    request.finalAmountPaisa = paymentAmount * 100;
+    request.paymentMethod = 'khalti';
+    request.paymentStatus = 'completed';
+    request.status = 'completed';
+    await request.save();
+
+    const user = await require('../models/User').findById(request.userId);
+    const collector = await require('../models/Collector').findById(request.collectorId);
+
+    if (user) {
+      await user.updateOne({
+        $inc: {
+          totalEarnings: paymentAmount,
+          totalWeightRecycled: request.weight,
+          ecoPoints: Math.round(request.weight * 10),
+        },
+      });
+    }
+
+    if (collector) {
+      await collector.updateOne({
+        $inc: {
+          totalEarnings: paymentAmount,
+          totalWeightCollected: request.weight,
+        },
+        $push: {
+          paymentHistory: {
+            pickupId: request._id,
+            finalAmount: paymentAmount,
+            weight: request.weight,
+            paymentMethod: 'khalti',
+            paidAt: new Date(),
+          },
+        },
+      });
+    }
+
+    await request.populate('userId', 'name phone khaltiNumber');
+    await request.populate('collectorId', 'name phone company rating location');
+
+    const io = req.app.get('io');
+    if (io) {
+      emitPickupUpdate(io, request);
+      io.to(`user:${request.userId.toString()}`).emit('payment_completed', {
+        requestId: request._id.toString(),
+        finalAmount: paymentAmount,
+        weight: request.weight,
+        ecoPointsEarned: Math.round(request.weight * 10),
+      });
+    }
+
+    return res.json({ pickup: serializePickup(request) });
+  } catch (error) {
+    console.error('Error completing pickup payment:', error);
+    return res.status(500).json({ message: 'Unable to complete pickup payment' });
+  }
+});
+
 router.post('/complete/:requestId', requireAuth, requireRole(['collector']), async (req, res) => {
   try {
     const request = await PickupRequest.findById(req.params.requestId);
@@ -407,6 +633,14 @@ router.post('/complete/:requestId', requireAuth, requireRole(['collector']), asy
 
     request.status = 'completed';
     await request.save();
+
+    await request.populate('userId', 'name phone');
+    await request.populate('collectorId', 'name phone company rating location');
+
+    const io = req.app.get('io');
+    if (io) {
+      emitPickupUpdate(io, request);
+    }
 
     return res.json({ pickup: serializePickup(request) });
   } catch (error) {

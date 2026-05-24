@@ -1,12 +1,26 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Linking, Pressable, SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Pressable, SafeAreaView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import MapView, { Marker, Polyline, UrlTile } from 'react-native-maps';
-import { GlassCard } from '../../components/ui';
-import { endpoints } from '../../api/client';
 import { connectPickupSocket, disconnectPickupSocket } from '../../api/socket';
 import { colors } from '../../theme/tokens';
-import { CollectorBottomNav } from './Shared';
+
+const DEFAULT_COORD = { latitude: 27.7172, longitude: 85.324 };
+
+function normalizeCoord(input) {
+  if (!input) {
+    return null;
+  }
+
+  const latitude = Number(input.latitude ?? input.lat);
+  const longitude = Number(input.longitude ?? input.lng);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  return { latitude, longitude };
+}
 
 function Header({ onBack }) {
   return (
@@ -14,82 +28,30 @@ function Header({ onBack }) {
       <Pressable onPress={onBack} hitSlop={12} style={styles.headerButton}>
         <MaterialCommunityIcons name="arrow-left" size={28} color={colors.primary} />
       </Pressable>
-      <Text style={styles.headerTitle}>Routes</Text>
-      <View style={styles.headerButton}>
-        <MaterialCommunityIcons name="map-outline" size={24} color={colors.primary} />
-      </View>
+      <Text style={styles.headerTitle}>Navigate</Text>
+      <View style={styles.headerButton} />
     </View>
   );
 }
 
-function RouteCard({ request, onStartRoute, onCall, busy }) {
-  const donorName = request?.userName || 'Pickup Donor';
-  const address = request?.location?.address || 'Pickup location unavailable';
-  const estimate = request?.offer?.amount ? `Rs ${request.offer.amount}` : 'Offer pending';
-  const collectorCompany = request?.collectorCompany || 'EcoSathi Collector Team';
-
-  return (
-    <GlassCard style={styles.routeCard}>
-      <View style={styles.routeCardTop}>
-        <View style={styles.donorBadge}>
-          <Text style={styles.donorInitials}>{String(donorName).split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()}</Text>
-        </View>
-        <View style={styles.routeCopy}>
-          <Text style={styles.routeName}>{donorName}</Text>
-          <Text style={styles.routeMeta}>{address}</Text>
-          <Text style={styles.routeCompany}>{collectorCompany}</Text>
-        </View>
-        <View style={styles.offerChip}>
-          <Text style={styles.offerChipText}>{estimate}</Text>
-        </View>
-      </View>
-
-      <View style={styles.routeActions}>
-        <Pressable style={styles.routeActionSecondary} onPress={onCall}>
-          <MaterialCommunityIcons name="phone" size={20} color={colors.primary} />
-          <Text style={styles.routeActionSecondaryText}>Call</Text>
-        </Pressable>
-        <Pressable style={[styles.routeActionPrimary, busy && styles.routeActionPrimaryDisabled]} onPress={onStartRoute} disabled={busy}>
-          <MaterialCommunityIcons name="navigation-variant-outline" size={20} color="#ffffff" />
-          <Text style={styles.routeActionPrimaryText}>{busy ? 'Please wait' : 'Accept & Start Route'}</Text>
-        </Pressable>
-      </View>
-    </GlassCard>
-  );
-}
-
 export function CollectorMapScreen({ navigation, route }) {
-  const [busy, setBusy] = useState(false);
   const request = route?.params?.request || null;
+  const mapRef = useRef(null);
+  const initialCollectorCoord = normalizeCoord(request?.collectorLocation) || DEFAULT_COORD;
+  const normalizedDestination = normalizeCoord(request?.location) || DEFAULT_COORD;
+
   const [collectorLocation, setCollectorLocation] = useState({
-    latitude: request?.collectorLocation?.latitude || 27.7172,
-    longitude: request?.collectorLocation?.longitude || 85.324,
+    latitude: initialCollectorCoord.latitude,
+    longitude: initialCollectorCoord.longitude,
   });
   const [routeCoordinates, setRouteCoordinates] = useState([]);
 
-  const destinationLocation = useMemo(() => ({
-    latitude: request?.location?.lat || 27.7172,
-    longitude: request?.location?.lng || 85.324,
-  }), [request]);
-
-  const routeRegion = useMemo(() => {
-    const latitude = (collectorLocation.latitude + destinationLocation.latitude) / 2;
-    const longitude = (collectorLocation.longitude + destinationLocation.longitude) / 2;
-    const latitudeDelta = Math.max(Math.abs(collectorLocation.latitude - destinationLocation.latitude) * 1.8, 0.02);
-    const longitudeDelta = Math.max(Math.abs(collectorLocation.longitude - destinationLocation.longitude) * 1.8, 0.02);
-
-    return {
-      latitude,
-      longitude,
-      latitudeDelta,
-      longitudeDelta,
-    };
-  }, [collectorLocation.latitude, collectorLocation.longitude, destinationLocation.latitude, destinationLocation.longitude]);
+  const destinationLocation = useMemo(() => normalizedDestination, [normalizedDestination]);
 
   useEffect(() => {
     let mounted = true;
 
-    const loadRoute = async () => {
+    const loadRoadRoute = async () => {
       try {
         const response = await fetch(
           `https://router.project-osrm.org/route/v1/driving/${collectorLocation.longitude},${collectorLocation.latitude};${destinationLocation.longitude},${destinationLocation.latitude}?overview=full&geometries=geojson`
@@ -102,15 +64,14 @@ export function CollectorMapScreen({ navigation, route }) {
           return;
         }
 
-        setRouteCoordinates(
-          geometry.map(([longitude, latitude]) => ({ latitude, longitude }))
-        );
+        setRouteCoordinates(geometry.map(([longitude, latitude]) => ({ latitude, longitude })));
       } catch (error) {
-        console.log('[collector-route] route load failed', error?.message || error);
+        console.log('[collector-map] route load failed', error?.message || error);
+        setRouteCoordinates([collectorLocation, destinationLocation]);
       }
     };
 
-    loadRoute();
+    loadRoadRoute();
 
     return () => {
       mounted = false;
@@ -139,7 +100,10 @@ export function CollectorMapScreen({ navigation, route }) {
       const Location = await import('expo-location');
 
       const emitCollectorLocation = (latitude, longitude) => {
-        setCollectorLocation({ latitude, longitude });
+        const current = { latitude, longitude };
+        setCollectorLocation(current);
+
+        // Server persists and broadcasts only after request is accepted; safe to emit here.
         socket.emit('pickup_location_update', {
           requestId: request._id,
           latitude,
@@ -148,15 +112,13 @@ export function CollectorMapScreen({ navigation, route }) {
       };
 
       try {
-        const currentPosition = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
+        const currentPosition = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
 
         if (mounted) {
           emitCollectorLocation(currentPosition.coords.latitude, currentPosition.coords.longitude);
         }
       } catch (error) {
-        console.log('[collector-route] initial position failed', error?.message || error);
+        console.log('[collector-map] initial position failed', error?.message || error);
       }
 
       watchSubscription = await Location.watchPositionAsync(
@@ -182,99 +144,69 @@ export function CollectorMapScreen({ navigation, route }) {
     };
   }, [request]);
 
-  const openNavigate = () => {
-    navigation.navigate('CollectorActivePickup', { request });
-  };
-
-  const acceptAndNavigate = async () => {
-    if (!request?._id || busy) {
+  useEffect(() => {
+    if (!mapRef.current) {
       return;
     }
 
-    if (request.status !== 'accepted') {
-      setBusy(true);
+    const coords = routeCoordinates.length > 1 ? routeCoordinates : [collectorLocation, destinationLocation];
+    const timer = setTimeout(() => {
       try {
-        const response = await endpoints.acceptPickup(request._id);
-        const pickup = response?.data?.pickup || request;
-        navigation.navigate('CollectorRoutes', { request: { ...request, ...pickup, status: 'accepted' } });
-        return;
-      } finally {
-        setBusy(false);
+        mapRef.current.fitToCoordinates(coords, {
+          edgePadding: { top: 100, right: 70, bottom: 100, left: 70 },
+          animated: true,
+        });
+      } catch (error) {
+        console.log('[collector-map] fit failed', error?.message || error);
       }
-    }
+    }, 60);
 
-    openNavigate();
-  };
-
-  const openCall = async () => {
-    const phone = request?.userPhone || request?.phone;
-
-    if (!phone) {
-      return;
-    }
-
-    await Linking.openURL(`tel:${phone}`);
-  };
+    return () => clearTimeout(timer);
+  }, [routeCoordinates, collectorLocation, destinationLocation]);
 
   return (
     <SafeAreaView style={styles.shell}>
       <StatusBar barStyle="dark-content" />
+      <Header onBack={() => navigation.goBack()} />
 
-      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-        <Header onBack={() => navigation.goBack()} />
+      <View style={styles.mapWrap}>
+        <MapView
+          ref={mapRef}
+          style={styles.mapView}
+          initialRegion={{
+            latitude: collectorLocation.latitude,
+            longitude: collectorLocation.longitude,
+            latitudeDelta: 0.02,
+            longitudeDelta: 0.02,
+          }}
+          mapType="none"
+          showsCompass={false}
+          showsMyLocationButton={false}
+          showsTraffic={false}
+        >
+          <UrlTile
+            urlTemplate="https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
+            maximumZ={19}
+            flipY={false}
+          />
 
-        <RouteCard request={request} onStartRoute={acceptAndNavigate} onCall={openCall} busy={busy} />
+          {normalizeCoord(collectorLocation) ? (
+            <Marker coordinate={collectorLocation} title="Collector" description="Live collector location" pinColor={colors.primary} />
+          ) : null}
+          {normalizeCoord(destinationLocation) ? (
+            <Marker coordinate={destinationLocation} title={request?.userName || 'Pickup'} description={request?.location?.address || 'Pickup location'} pinColor="#D32F2F" />
+          ) : null}
 
-        <GlassCard style={styles.mapCard}>
-          <View style={styles.mapLegendRow}>
-            <Text style={styles.mapLegendTitle}>Live Route</Text>
-            <Text style={styles.mapLegendSubTitle}>OpenStreetMap tiles, no billing required</Text>
-          </View>
-
-          <MapView
-            style={styles.mapView}
-            region={routeRegion}
-            mapType="none"
-            showsCompass={false}
-            showsMyLocationButton={false}
-            showsTraffic={false}
-          >
-            <UrlTile
-              urlTemplate="https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
-              maximumZ={19}
-              flipY={false}
-            />
-
-            <Marker
-              coordinate={collectorLocation}
-              title="Collector"
-              description="Live collector location"
-            />
-
-            <Marker
-              coordinate={destinationLocation}
-              title={request?.userName || 'Pickup location'}
-              description={request?.location?.address || 'Pickup location'}
-            />
-
-            <Polyline
-              coordinates={routeCoordinates.length > 1 ? routeCoordinates : [collectorLocation, destinationLocation]}
-              strokeColor={colors.primary}
-              strokeWidth={4}
-            />
-          </MapView>
-
-          <View style={styles.mapFooter}>
-            <Text style={styles.mapFooterText}>This route screen can also mirror the collector's live location for the user tracking view.</Text>
-          </View>
-        </GlassCard>
-      </ScrollView>
-
-      <CollectorBottomNav navigation={navigation} activeRoute="CollectorRoutes" />
+          <Polyline
+            coordinates={routeCoordinates.length > 1 ? routeCoordinates : [collectorLocation, destinationLocation]}
+            strokeColor={colors.primary}
+            strokeWidth={5}
+          />
+        </MapView>
+      </View>
     </SafeAreaView>
   );
 }
-
 
 export default CollectorMapScreen;
 
@@ -283,16 +215,11 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f4f8f4',
   },
-  content: {
-    paddingHorizontal: 18,
-    paddingTop: 8,
-    paddingBottom: 120,
-    gap: 16,
-  },
   headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    paddingHorizontal: 18,
     paddingVertical: 8,
   },
   headerButton: {
@@ -306,120 +233,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.primary,
   },
-  routeCard: {
-    borderRadius: 24,
-    padding: 16,
-  },
-  routeCardTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  donorBadge: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: '#d5efb3',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  donorInitials: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: colors.primary,
-  },
-  routeCopy: {
+  mapWrap: {
     flex: 1,
-  },
-  routeName: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: colors.onSurface,
-  },
-  routeMeta: {
-    marginTop: 4,
-    fontSize: 13,
-    color: colors.onSurface,
-    opacity: 0.74,
-  },
-  offerChip: {
-    backgroundColor: '#d8f36c',
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  offerChipText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#3b6207',
-  },
-  routeActions: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 14,
-  },
-  routeActionSecondary: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    borderRadius: 18,
-    paddingVertical: 12,
-    borderWidth: 1.5,
-    borderColor: '#c8d6c9',
-    backgroundColor: '#f8fbf8',
-  },
-  routeActionSecondaryText: {
-    color: colors.onSurface,
-    fontWeight: '600',
-  },
-  routeActionPrimary: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    borderRadius: 18,
-    paddingVertical: 12,
-    backgroundColor: colors.primary,
-  },
-  routeActionPrimaryText: {
-    color: '#ffffff',
-    fontWeight: '700',
-  },
-  mapCard: {
-    borderRadius: 24,
     overflow: 'hidden',
-    padding: 0,
-  },
-  mapLegendRow: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 10,
-  },
-  mapLegendTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: colors.onSurface,
-  },
-  mapLegendSubTitle: {
-    marginTop: 4,
-    fontSize: 13,
-    color: colors.onSurface,
-    opacity: 0.72,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
   },
   mapView: {
-    height: 360,
-  },
-  mapFooter: {
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-  },
-  mapFooterText: {
-    fontSize: 13,
-    color: colors.onSurface,
-    opacity: 0.74,
-    lineHeight: 18,
+    flex: 1,
   },
 });

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Pressable,
   ScrollView,
   StatusBar,
@@ -14,30 +15,16 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { GlassCard, ScreenEnter } from '../../components/ui';
 import { endpoints } from '../../api/client';
 import { connectPickupSocket, disconnectPickupSocket } from '../../api/socket';
-import { colors, spacing } from '../../theme/tokens';
-import {
-  dashboardTasks,
-  CollectorBottomNav,
-  styles,
-} from './Shared';
+import { colors } from '../../theme/tokens';
+import { dashboardTasks, CollectorBottomNav, styles } from './Shared';
 
-/* ── Collector name — replace with your auth/context value ── */
 const COLLECTOR_NAME = 'Ramesh Kumar';
+const avatarPlaceholder = {
+  uri: 'https://lh3.googleusercontent.com/aida-public/AB6AXuC6S10xU2QG3WsIAXYQChmA0b4hp8ag4J7qk9GhsjqS5pB4czq_2h6sD5mN8pn25JmH9A3V9B8W0muH0cZGq9p48dH-XK2D3t1I4vP10OgD0G1wqE4kK2On0gFa1x7f1Gv3Dw2D0p6cL3d3E9kM5xJXWw4JtR1F7yAQbQGfJ3svqNNG2z7fZTK2v3lPmA55QmEri1x7aKQmK8y7tbZ1Q',
+};
 
 function getGreeting() {
-  const hour = new Date().getHours();
-  if (hour < 12) return 'Good morning';
-  if (hour < 17) return 'Good afternoon';
-  return 'Good evening';
-}
-
-function getInitials(name) {
-  return name
-    .split(' ')
-    .map((n) => n[0])
-    .join('')
-    .toUpperCase()
-    .slice(0, 2);
+  return 'Namaste';
 }
 
 function timeAgo(inputDate) {
@@ -98,26 +85,21 @@ function upsertPendingRequest(current, nextRequest) {
   return rest;
 }
 
-/* ── Top Bar with Welcome ── */
 function CollectorTopBar() {
   return (
     <View style={styles.topBar}>
-      <View style={styles.welcomeBlock}>
-        <Text style={styles.welcomeGreeting}>{getGreeting()} 👋</Text>
-        <Text style={styles.welcomeName}>{COLLECTOR_NAME}</Text>
+      <View style={styles.greetingWrap}>
+        <View style={styles.avatarWrap}>
+          <Image source={avatarPlaceholder} style={styles.avatar} />
+        </View>
+        <View>
+          <Text style={styles.greetingLabel}>{getGreeting()},</Text>
+          <Text style={styles.greetingName}>{COLLECTOR_NAME}!</Text>
+        </View>
       </View>
-      <View style={styles.topBarRight}>
-        <View style={styles.notifWrap}>
-          <MaterialCommunityIcons
-            name="bell-outline"
-            size={20}
-            color={colors.primary}
-          />
-          <View style={styles.notifDot} />
-        </View>
-        <View style={styles.avatarCircle}>
-          <Text style={styles.avatarText}>{getInitials(COLLECTOR_NAME)}</Text>
-        </View>
+
+      <View style={styles.bellWrap}>
+        <MaterialCommunityIcons name="bell-outline" size={20} color={colors.primary} />
       </View>
     </View>
   );
@@ -233,20 +215,11 @@ export function CollectorDashboardScreen({ navigation }) {
     <ScreenEnter>
       <StatusBar barStyle="dark-content" />
       <View style={styles.screen}>
-        <LinearGradient
-          colors={['#f8fbf9', '#eef5ef', '#f7f9fb']}
-          style={styles.screenBg}
-        >
-          <ScrollView
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
-          >
-            {/* ── Top Bar ── */}
+        <LinearGradient colors={['#f8fbf9', '#eef5ef', '#f7f9fb']} style={styles.screenBg}>
+          <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             <CollectorTopBar />
 
-            {/* ── Hero: Status + Earnings ── */}
             <View style={styles.heroGrid}>
-              {/* Duty Status */}
               <GlassCard style={styles.statusCard}>
                 <Text style={styles.sectionLabel}>Duty Status</Text>
                 <View style={styles.statusRow}>
@@ -276,29 +249,22 @@ export function CollectorDashboardScreen({ navigation }) {
                 </View>
               </GlassCard>
 
-              {/* Daily Earnings */}
               <GlassCard style={styles.earningsCard}>
                 <Text style={styles.sectionLabel}>Daily Earnings</Text>
                 <View style={styles.earningsRow}>
                   <Text style={styles.earningsValue}>Rs 1,250</Text>
                   <View style={styles.earningsIconBubble}>
-                    <MaterialCommunityIcons
-                      name="credit-card-outline"
-                      size={18}
-                      color={colors.secondary}
-                    />
+                    <MaterialCommunityIcons name="credit-card-outline" size={18} color={colors.secondary} />
                   </View>
                 </View>
               </GlassCard>
             </View>
 
-            {/* ── Section Header ── */}
             <View style={styles.sectionHeaderRow}>
               <Text style={styles.sectionTitle}>Nearby Requests</Text>
               <Text style={styles.sectionMeta}>{liveCount} Live</Text>
             </View>
 
-            {/* ── Request Cards ── */}
             <View style={styles.cardStack}>
               {!online ? (
                 <GlassCard style={styles.requestCard}>
@@ -332,10 +298,7 @@ export function CollectorDashboardScreen({ navigation }) {
               {requests.map((request) => (
                 <GlassCard
                   key={request._id}
-                  style={[
-                    styles.requestCard,
-                    request.featured && styles.requestCardFeatured,
-                  ]}
+                  style={[styles.requestCard, request.featured && styles.requestCardFeatured]}
                 >
                   {request.featured && (
                     <View style={styles.featuredBadge}>
@@ -347,16 +310,10 @@ export function CollectorDashboardScreen({ navigation }) {
                     <View style={[styles.requestTopRow, request.featured && { marginTop: 8 }]}>
                       <View style={styles.requestLeft}>
                         <View style={styles.locationIconWrap}>
-                          <MaterialCommunityIcons
-                            name="map-marker-outline"
-                            size={20}
-                            color={colors.primary}
-                          />
+                          <MaterialCommunityIcons name="map-marker-outline" size={20} color={colors.primary} />
                         </View>
                         <View style={styles.requestTextBlock}>
-                          <Text style={styles.requestDistance}>
-                            {timeAgo(request.createdAt)}
-                          </Text>
+                          <Text style={styles.requestDistance}>{timeAgo(request.createdAt)}</Text>
                           <Text style={styles.requestArea} numberOfLines={2}>
                             {request.location?.address || 'Pickup location unavailable'}
                           </Text>
@@ -370,15 +327,8 @@ export function CollectorDashboardScreen({ navigation }) {
 
                     <View style={styles.tagRow}>
                       {(request.scrapTypes || []).map((tag) => (
-                        <View
-                          key={`${request._id}-${tag.category}`}
-                          style={styles.tagChip}
-                        >
-                          <MaterialCommunityIcons
-                            name={tag.icon}
-                            size={13}
-                            color={colors.onSurface}
-                          />
+                        <View key={`${request._id}-${tag.category}`} style={styles.tagChip}>
+                          <MaterialCommunityIcons name={tag.icon} size={13} color={colors.onSurface} />
                           <Text style={styles.tagText}>{tag.category}</Text>
                         </View>
                       ))}
@@ -386,19 +336,11 @@ export function CollectorDashboardScreen({ navigation }) {
 
                     <View style={styles.tagRow}>
                       <View style={styles.tagChip}>
-                        <MaterialCommunityIcons
-                          name="scale-bathroom"
-                          size={13}
-                          color={colors.onSurface}
-                        />
+                        <MaterialCommunityIcons name="scale-bathroom" size={13} color={colors.onSurface} />
                         <Text style={styles.tagText}>{formatWeight(request)}</Text>
                       </View>
                       <View style={styles.tagChip}>
-                        <MaterialCommunityIcons
-                          name="phone-outline"
-                          size={13}
-                          color={colors.onSurface}
-                        />
+                        <MaterialCommunityIcons name="phone-outline" size={13} color={colors.onSurface} />
                         <Text style={styles.tagText}>{request.phone || 'No phone'}</Text>
                       </View>
                     </View>
@@ -434,7 +376,6 @@ export function CollectorDashboardScreen({ navigation }) {
               ))}
             </View>
 
-            {/* ── Today's Tasks ── */}
             <GlassCard style={styles.tasksCard}>
               <View style={styles.sectionHeaderRow}>
                 <Text style={styles.sectionTitleSmall}>Today's Tasks</Text>
@@ -466,8 +407,8 @@ export function CollectorDashboardScreen({ navigation }) {
                               task.state === 'done'
                                 ? '#ffffff'
                                 : task.state === 'active'
-                                ? colors.primary
-                                : colors.onSurfaceVariant
+                                  ? colors.primary
+                                  : colors.onSurfaceVariant
                             }
                           />
                         </View>
@@ -501,10 +442,7 @@ export function CollectorDashboardScreen({ navigation }) {
             </GlassCard>
           </ScrollView>
 
-          <CollectorBottomNav
-            navigation={navigation}
-            activeRoute="CollectorDashboard"
-          />
+          <CollectorBottomNav navigation={navigation} activeRoute="CollectorDashboard" />
         </LinearGradient>
       </View>
     </ScreenEnter>

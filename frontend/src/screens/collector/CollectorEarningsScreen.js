@@ -8,7 +8,9 @@ import { colors, spacing, typography } from '../../theme/tokens';
 import { formatNPR } from '../../utils/format';
 import { collectorAvatar, dashboardTasks, earningsBars, collections, bottomRoutes, collectorTabBar, CollectorTopBar, CollectorBottomNav, SummaryRow, styles } from './Shared';
 
-export function CollectorEarningsScreen({ navigation }) {
+export function CollectorEarningsScreen({ navigation, route }) {
+  const welcome = route?.params?.welcomeMessage || null;
+
   return (
     <ScreenEnter>
       <StatusBar barStyle="dark-content" />
@@ -16,6 +18,13 @@ export function CollectorEarningsScreen({ navigation }) {
         <LinearGradient colors={['#f8fbf9', '#eef5ef', '#f7f9fb']} style={styles.screenBg}>
           <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
             <CollectorTopBar title="RecycleSathi" />
+
+            {welcome ? (
+              <GlassCard style={{ marginBottom: 12, padding: 12, borderRadius: 12 }}>
+                <Text style={{ fontWeight: '800', color: colors.primary }}>{welcome}</Text>
+                <Text style={{ marginTop: 6, color: '#5c6c5d' }}>Thanks for confirming arrival. Earnings will appear here after collection.</Text>
+              </GlassCard>
+            ) : null}
 
             <GlassCard style={styles.walletCard}>
               <Text style={styles.walletLabel}>Total Wallet Balance</Text>

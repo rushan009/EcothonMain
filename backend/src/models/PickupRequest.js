@@ -18,6 +18,11 @@ const pickupRequestSchema = new mongoose.Schema({
     value: { type: Number, default: null },
     unit: { type: String, default: 'kg' },
   },
+  weight: { type: Number, default: null },
+  finalAmount: { type: Number, default: null },
+  finalAmountPaisa: { type: Number, default: null },
+  paymentMethod: { type: String, default: null },
+  paymentStatus: { type: String, default: 'pending' },
   collectorLocation: {
     latitude: { type: Number, default: null },
     longitude: { type: Number, default: null },
@@ -26,7 +31,7 @@ const pickupRequestSchema = new mongoose.Schema({
   note: { type: String, default: '' },
   status: {
     type: String,
-    enum: ['pending', 'accepted', 'completed', 'cancelled', 'declined'],
+    enum: ['pending', 'accepted', 'arrived', 'completed', 'cancelled', 'declined'],
     default: 'pending',
   },
   createdAt: { type: Date, default: Date.now },
