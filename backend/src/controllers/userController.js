@@ -1,4 +1,5 @@
 const User = require('../models/User');
+const { getScrapPrices } = require('../utils/scrapPricing');
 
 const resolveUser = async (req) => {
   if (req.user) {
@@ -15,12 +16,10 @@ const resolveUser = async (req) => {
   return null;
 };
 
-const buildScrapPrices = () => [
-  { id: 'paper', label: 'Paper', rate: 15, unit: 'kg', trend: 2, icon: 'description' },
-  { id: 'plastic', label: 'Plastic', rate: 25, unit: 'kg', trend: 5, icon: 'shopping_bag' },
-  { id: 'metal', label: 'Metal', rate: 60, unit: 'kg', trend: -1, icon: 'settings' },
-  { id: 'glass', label: 'Glass', rate: 8, unit: 'kg', trend: 0, icon: 'liquor' },
-];
+const buildScrapPrices = () => getScrapPrices().map((price) => ({
+  ...price,
+  trend: price.id === 'paper' ? 2 : price.id === 'plastic' || price.id === 'soft-plastic' || price.id === 'hard-plastic' ? 5 : price.id === 'scrap-metal' ? -1 : 0,
+}));
 
 const buildRecentPickups = () => [
   { id: 'pk-1024', title: '12kg Multi-waste', date: 'Oct 24', amount: 340, status: 'completed' },

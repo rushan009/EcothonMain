@@ -10,11 +10,11 @@ router.post('/classify', async (req, res) => {
       return res.status(400).json({ message: 'Image payload is required' });
     }
 
-    const results = await classifyWaste(image);
+    const { results, source } = await classifyWaste(image);
 
     return res.json({
       results,
-      source: 'mock',
+      source,
     });
   } catch (error) {
     console.error('Error classifying waste:', error);

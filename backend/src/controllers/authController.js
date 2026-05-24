@@ -43,7 +43,9 @@ exports.registerUser = async (req, res) => {
     // If the user is a collector, create a corresponding collector document
     if (role === 'collector') {
       const newCollector = new Collector({
+        userId: newUser._id,
         name,
+        company: req.body.company || null,
         email,
         phone,
         passwordHash: hashedPassword,

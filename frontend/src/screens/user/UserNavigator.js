@@ -16,7 +16,7 @@ function Tabs() {
   return (
     <Tab.Navigator tabBar={userTabBar} screenOptions={{ headerShown: false }}>
       <Tab.Screen name="Home" component={UserHomeScreen} />
-      <Tab.Screen name="Scan" component={ScanScreen} />
+      <Tab.Screen name="Call" component={ScanScreen} />
       <Tab.Screen name="Pickup" component={MyPickupsScreen} />
       <Tab.Screen name="Rewards" component={UserRewardsScreen} />
       <Tab.Screen name="Profile" component={UserProfileScreen} />

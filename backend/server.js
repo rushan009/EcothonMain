@@ -10,6 +10,6 @@ const server = http.createServer(app);
 const io = registerSocket(server);
 app.set('io', io);
 
-server.listen(process.env.PORT || 3000, () => {
+server.listen(process.env.PORT || 3000, '0.0.0.0', () => {
   console.log(`Server running on port ${process.env.PORT || 3000}`);
 });

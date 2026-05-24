@@ -6,7 +6,7 @@ import { colors, spacing, typography } from '../../theme/tokens';
 export function userTabBar({ state, navigation }) {
   const items = {
     Home: { icon: 'home' },
-    Scan: { icon: 'qrcode-scan' },
+    Call: { icon: 'qrcode-scan' },
     Pickup: { icon: 'truck-delivery' },
     Rewards: { icon: 'medal' },
     Profile: { icon: 'account' },

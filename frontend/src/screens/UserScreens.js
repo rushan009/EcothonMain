@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, ScrollView, StyleSheet, Text, View } from 'react-native';
+import MapView, { Marker, UrlTile } from 'react-native-maps';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import {
@@ -18,6 +19,7 @@ import {
   ScreenEnter,
 } from '../components/ui';
 import { endpoints, setAccessToken } from '../api/client';
+import { connectPickupSocket, disconnectPickupSocket } from '../api/socket';
 import { MOCK_COLLECTORS, MOCK_USER, SCRAP_RATES, USER_PICKUPS } from '../data/mockData';
 import { useTranslation } from '../i18n/LanguageContext';
 import { colors, spacing, typography } from '../theme/tokens';
@@ -277,15 +279,75 @@ export function PickupBookingScreen({ navigation }) {
 export function LiveTrackingScreen({ navigation }) {
   const [step, setStep] = useState(1);
   const states = ['Confirmed', 'En Route', 'Arrived', 'Collected'];
+  const [collectorLocation, setCollectorLocation] = useState({ latitude: 27.7172, longitude: 85.324 });
+  const requestId = null;
 
   useEffect(() => {
     const timer = setInterval(() => setStep((prev) => (prev < 4 ? prev + 1 : prev)), 3000);
     return () => clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+
+    const attachSocket = async () => {
+      const socket = await connectPickupSocket();
+
+      if (!socket || !mounted) {
+        return;
+      }
+
+      const handleLocationUpdate = (payload) => {
+        if (!payload?.collectorLocation) {
+          return;
+        }
+
+        setCollectorLocation({
+          latitude: payload.collectorLocation.latitude,
+          longitude: payload.collectorLocation.longitude,
+        });
+      };
+
+      socket.on('pickup_location_updated', handleLocationUpdate);
+
+      return () => {
+        socket.off('pickup_location_updated', handleLocationUpdate);
+      };
+    };
+
+    attachSocket();
+
+    return () => {
+      mounted = false;
+      disconnectPickupSocket();
+    };
+  }, []);
+
   return (
     <View style={styles.pageFlex}>
-      <MapViewWrapper label="Live Collector Tracking" height={420} />
+      <GlassCard style={styles.liveMapCard}>
+        <MapView
+          style={styles.liveMapView}
+          mapType="none"
+          initialRegion={{
+            latitude: 27.7172,
+            longitude: 85.324,
+            latitudeDelta: 0.02,
+            longitudeDelta: 0.02,
+          }}
+        >
+          <UrlTile
+            urlTemplate="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+            maximumZ={19}
+            flipY={false}
+          />
+          <Marker
+            coordinate={{ latitude: collectorLocation.latitude, longitude: collectorLocation.longitude }}
+            title="Collector"
+            description="Live collector location"
+          />
+        </MapView>
+      </GlassCard>
       <GlassCard style={styles.overlayCard}>
         <Text style={styles.sectionBody}>🚴 Hari is on the way — ETA 8 min</Text>
         <View style={styles.stepperRow}>
@@ -664,6 +726,14 @@ const styles = StyleSheet.create({
   },
   overlayCard: {
     gap: spacing.sm,
+  },
+  liveMapCard: {
+    overflow: 'hidden',
+    padding: 0,
+    borderRadius: 24,
+  },
+  liveMapView: {
+    height: 420,
   },
   stepperRow: {
     flexDirection: 'row',

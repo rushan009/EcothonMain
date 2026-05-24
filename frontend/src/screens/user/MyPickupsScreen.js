@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
+  Linking,
   Pressable,
   RefreshControl,
   SafeAreaView,
@@ -9,11 +10,12 @@ import {
   Text,
   View,
 } from 'react-native';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import MapView, { Marker, Polyline, UrlTile } from 'react-native-maps';
 import { endpoints } from '../../api/client';
 import { connectPickupSocket, disconnectPickupSocket } from '../../api/socket';
 
 const PRIMARY_GREEN = '#2E7D32';
-const LIGHT_GREEN = '#A5D6A7';
 const BACKGROUND = '#F9F9F9';
 const CARD_BG = '#FFFFFF';
 
@@ -48,7 +50,279 @@ function statusMeta(status) {
     return { label: '❌ Cancelled', color: '#7F1D1D', bg: '#FEE2E2' };
   }
 
+  if (status === 'declined') {
+    return { label: '⚪ Declined', color: '#6B7280', bg: '#E5E7EB' };
+  }
+
   return { label: '🟡 Pending', color: '#854D0E', bg: '#FEF3C7' };
+}
+
+function formatEta(minutes) {
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    return 'ETA unavailable';
+  }
+
+  if (minutes < 60) {
+    return `Arriving in ${Math.max(1, Math.round(minutes))} min`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remaining = Math.round(minutes % 60);
+
+  if (remaining === 0) {
+    return `Arriving in ${hours} hr`;
+  }
+
+  return `Arriving in ${hours} hr ${remaining} min`;
+}
+
+function haversineDistanceKm(origin, destination) {
+  if (!origin || !destination) {
+    return 0;
+  }
+
+  const toRad = (value) => (value * Math.PI) / 180;
+  const earthRadiusKm = 6371;
+  const deltaLat = toRad(destination.latitude - origin.latitude);
+  const deltaLng = toRad(destination.longitude - origin.longitude);
+  const startLat = toRad(origin.latitude);
+  const endLat = toRad(destination.latitude);
+
+  const a = Math.sin(deltaLat / 2) ** 2
+    + Math.cos(startLat) * Math.cos(endLat) * Math.sin(deltaLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return earthRadiusKm * c;
+}
+
+function estimateEtaFromPoints(origin, destination) {
+  const distanceKm = haversineDistanceKm(origin, destination);
+
+  if (!Number.isFinite(distanceKm) || distanceKm <= 0) {
+    return null;
+  }
+
+  const averageCitySpeedKmh = 18;
+  return (distanceKm / averageCitySpeedKmh) * 60;
+}
+
+function normalizeCoordinates(input) {
+  if (!input) {
+    return null;
+  }
+
+  const latitude = Number(input.latitude ?? input.lat);
+  const longitude = Number(input.longitude ?? input.lng);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  return { latitude, longitude };
+}
+
+function PickupRoutePreview({ pickup }) {
+  const [routeCoordinates, setRouteCoordinates] = useState([]);
+  const [etaMinutes, setEtaMinutes] = useState(null);
+  const mapRef = useRef(null);
+
+  const collectorLocation = normalizeCoordinates(
+    pickup?.collectorLocation || pickup?.collector?.location || pickup?.collectorId?.location || null,
+  );
+  const pickupLocation = pickup?.location || null;
+  const collectorName = pickup?.collectorName || pickup?.collector?.name || pickup?.collectorId?.name || 'Collector on the way';
+  const collectorPhone = pickup?.collectorPhone || pickup?.collector?.phone || pickup?.collectorId?.phone || null;
+  const collectorCompany = pickup?.collectorCompany || pickup?.collector?.company || pickup?.collectorId?.company || 'EcoSathi Collector Team';
+  const pickupPoint = normalizeCoordinates(pickupLocation);
+
+  const previewRegion = useMemo(() => {
+    if (!collectorLocation || !pickupPoint) {
+      return {
+        latitude: collectorLocation?.latitude || pickupPoint?.latitude || 27.7172,
+        longitude: collectorLocation?.longitude || pickupPoint?.longitude || 85.324,
+        latitudeDelta: 0.02,
+        longitudeDelta: 0.02,
+      };
+    }
+
+    const latitude = (collectorLocation.latitude + pickupPoint.latitude) / 2;
+    const longitude = (collectorLocation.longitude + pickupPoint.longitude) / 2;
+    const latitudeDelta = Math.max(Math.abs(collectorLocation.latitude - pickupPoint.latitude) * 1.6, 0.02);
+    const longitudeDelta = Math.max(Math.abs(collectorLocation.longitude - pickupPoint.longitude) * 1.6, 0.02);
+
+    return { latitude, longitude, latitudeDelta, longitudeDelta };
+  }, [collectorLocation, pickupPoint]);
+
+  useEffect(() => {
+    let mounted = true;
+    const startPoint = collectorLocation;
+    const endPoint = pickupPoint;
+
+    if (startPoint && endPoint) {
+      setRouteCoordinates([startPoint, endPoint]);
+      setEtaMinutes(estimateEtaFromPoints(startPoint, endPoint));
+    }
+
+    const loadRoute = async () => {
+      if (!startPoint || !endPoint) {
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          `https://router.project-osrm.org/route/v1/driving/${startPoint.longitude},${startPoint.latitude};${endPoint.longitude},${endPoint.latitude}?overview=full&geometries=geojson`
+        );
+
+        const data = await response.json();
+        const route = data?.routes?.[0] || null;
+        const geometry = route?.geometry?.coordinates || [];
+
+        if (!mounted || geometry.length === 0) {
+          return;
+        }
+
+        if (geometry.length > 1) {
+          setRouteCoordinates(geometry.map(([longitude, latitude]) => ({ latitude, longitude })));
+        }
+
+        if (route?.duration) {
+          setEtaMinutes(route.duration / 60);
+        }
+      } catch (error) {
+        console.log('[pickup-route] route load failed', error?.message || error);
+      }
+    };
+
+    loadRoute();
+
+    return () => {
+      mounted = false;
+    };
+  }, [collectorLocation, pickupPoint]);
+
+  const displayCoordinates = useMemo(() => {
+    if (routeCoordinates.length > 1) {
+      return routeCoordinates;
+    }
+
+    return collectorLocation?.latitude && collectorLocation?.longitude && pickupPoint
+      ? [
+        { latitude: collectorLocation.latitude, longitude: collectorLocation.longitude },
+        pickupPoint,
+      ]
+      : [];
+  }, [collectorLocation, pickupPoint, routeCoordinates]);
+
+  useEffect(() => {
+    if (!mapRef.current || displayCoordinates.length < 2) {
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      try {
+        mapRef.current.fitToCoordinates(displayCoordinates, {
+          edgePadding: { top: 50, right: 50, bottom: 50, left: 50 },
+          animated: true,
+        });
+      } catch (error) {
+        console.log('[pickup-route] fit failed', error?.message || error);
+      }
+    }, 50);
+
+    return () => clearTimeout(timer);
+  }, [displayCoordinates]);
+
+  return (
+    <View style={styles.liveTrackCard}>
+      <View style={styles.liveTrackHeader}>
+        <Text style={styles.liveTrackTitle}>Live Collector Location</Text>
+        <Text style={styles.liveTrackEta}>{formatEta(etaMinutes)}</Text>
+      </View>
+
+      <View style={styles.liveMapWrap}>
+        <MapView
+          ref={(instance) => {
+            if (instance) {
+              mapRef.current = instance;
+            }
+          }}
+          style={styles.liveMap}
+          mapType="none"
+          initialRegion={previewRegion}
+        >
+          <UrlTile
+            urlTemplate="https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
+            maximumZ={19}
+            flipY={false}
+          />
+
+          {collectorLocation?.latitude && collectorLocation?.longitude ? (
+            <Marker
+              coordinate={{ latitude: collectorLocation.latitude, longitude: collectorLocation.longitude }}
+              title={collectorName}
+              description={`${collectorCompany} • Live collector location`}
+              pinColor={PRIMARY_GREEN}
+              identifier="collector-location"
+            />
+          ) : null}
+
+          {pickupPoint ? (
+            <Marker
+              coordinate={pickupPoint}
+              title="Pickup"
+              description={pickupLocation.address || 'Pickup location'}
+              pinColor="#D32F2F"
+              identifier="pickup-location"
+            />
+          ) : null}
+
+          {displayCoordinates.length > 1 ? (
+            <Polyline
+              coordinates={displayCoordinates}
+              strokeColor={PRIMARY_GREEN}
+              strokeWidth={5}
+            />
+          ) : null}
+        </MapView>
+      </View>
+
+      <View style={styles.collectorInfoCard}>
+        <View style={styles.collectorInfoTopRow}>
+          <View style={styles.collectorAvatar}>
+            <MaterialCommunityIcons name="truck-fast-outline" size={22} color={PRIMARY_GREEN} />
+          </View>
+
+          <View style={styles.collectorInfoCopy}>
+            <Text style={styles.collectorName}>{collectorName}</Text>
+            <Text style={styles.collectorCompany}>{collectorCompany}</Text>
+          </View>
+
+          <View style={styles.collectorEtaChip}>
+            <Text style={styles.collectorEtaChipText}>{formatEta(etaMinutes)}</Text>
+          </View>
+        </View>
+
+        <View style={styles.collectorMetaRow}>
+          <View style={styles.collectorMetaItem}>
+            <Text style={styles.collectorMetaLabel}>Phone number</Text>
+            <Text style={styles.collectorMetaValue}>{collectorPhone || 'Not shared yet'}</Text>
+          </View>
+
+          <View style={styles.collectorMetaItem}>
+            <Text style={styles.collectorMetaLabel}>Status</Text>
+            <Text style={styles.collectorMetaValue}>{pickup.status === 'accepted' ? 'Accepted' : statusMeta(pickup.status).label}</Text>
+          </View>
+        </View>
+
+        {collectorPhone ? (
+          <Pressable style={styles.collectorCallButton} onPress={() => Linking.openURL(`tel:${collectorPhone}`)}>
+            <MaterialCommunityIcons name="phone" size={18} color="#ffffff" />
+            <Text style={styles.collectorCallButtonText}>Call collector</Text>
+          </Pressable>
+        ) : null}
+      </View>
+    </View>
+  );
 }
 
 export default function MyPickupsScreen({ navigation }) {
@@ -68,6 +342,8 @@ export default function MyPickupsScreen({ navigation }) {
     }
   }, []);
 
+  const visiblePickups = useMemo(() => pickups.filter((pickup) => pickup.status !== 'cancelled'), [pickups]);
+
   useEffect(() => {
     loadPickups();
   }, [loadPickups]);
@@ -82,6 +358,14 @@ export default function MyPickupsScreen({ navigation }) {
         return;
       }
 
+      const handleStatusChanged = (pickup) => {
+        if (!pickup?._id) {
+          return;
+        }
+
+        setPickups((current) => current.map((item) => (item._id === pickup._id ? { ...item, ...pickup } : item)));
+      };
+
       const handleAccepted = (payload) => {
         if (!payload?.requestId) {
           return;
@@ -89,17 +373,75 @@ export default function MyPickupsScreen({ navigation }) {
 
         setPickups((current) => current.map((pickup) => {
           if (pickup._id === payload.requestId) {
-            return { ...pickup, status: payload.status || 'accepted' };
+            const existingCollector = pickup.collectorId && typeof pickup.collectorId === 'object' ? pickup.collectorId : null;
+            const mergedCollector = payload.collector ? {
+              ...(existingCollector || {}),
+              ...payload.collector,
+              location: payload.collectorLocation
+                ? {
+                  lat: payload.collectorLocation.latitude,
+                  lng: payload.collectorLocation.longitude,
+                }
+                : existingCollector?.location || null,
+            } : existingCollector;
+
+            return {
+              ...pickup,
+              status: payload.status || 'accepted',
+              collectorLocation: payload.collectorLocation || pickup.collectorLocation || null,
+              collector: mergedCollector || pickup.collector || null,
+              collectorId: mergedCollector || pickup.collectorId,
+              collectorName: payload.collector?.name || pickup.collectorName,
+              collectorPhone: payload.collector?.phone || pickup.collectorPhone,
+              collectorCompany: payload.collector?.company || pickup.collectorCompany,
+            };
           }
 
           return pickup;
         }));
       };
 
+      const handleLocationUpdate = (payload) => {
+        if (!payload?.requestId || !payload?.collectorLocation) {
+          return;
+        }
+
+        setPickups((current) => current.map((pickup) => {
+          if (pickup._id !== payload.requestId) {
+            return pickup;
+          }
+
+          const existingCollector = pickup.collectorId && typeof pickup.collectorId === 'object' ? pickup.collectorId : null;
+          const mergedCollector = payload.collector ? {
+            ...(existingCollector || {}),
+            ...payload.collector,
+            location: {
+              lat: payload.collectorLocation.latitude,
+              lng: payload.collectorLocation.longitude,
+            },
+          } : existingCollector;
+
+          return {
+            ...pickup,
+            status: payload.status || pickup.status,
+            collectorLocation: payload.collectorLocation,
+            collector: mergedCollector || pickup.collector || null,
+            collectorId: mergedCollector || pickup.collectorId,
+            collectorName: payload.collector?.name || pickup.collectorName,
+            collectorPhone: payload.collector?.phone || pickup.collectorPhone,
+            collectorCompany: payload.collector?.company || pickup.collectorCompany,
+          };
+        }));
+      };
+
       socket.on('pickup_accepted', handleAccepted);
+      socket.on('pickup_status_changed', handleStatusChanged);
+      socket.on('pickup_location_updated', handleLocationUpdate);
 
       return () => {
         socket.off('pickup_accepted', handleAccepted);
+        socket.off('pickup_status_changed', handleStatusChanged);
+        socket.off('pickup_location_updated', handleLocationUpdate);
       };
     };
 
@@ -111,17 +453,12 @@ export default function MyPickupsScreen({ navigation }) {
     };
   }, []);
 
-  const totalPending = useMemo(() => pickups.filter((pickup) => pickup.status === 'pending').length, [pickups]);
+  const totalPending = useMemo(() => visiblePickups.filter((pickup) => pickup.status === 'pending').length, [visiblePickups]);
 
   const handleCancel = async (pickupId) => {
     try {
       await endpoints.cancelPickup(pickupId);
-      setPickups((current) => current.map((pickup) => {
-        if (pickup._id === pickupId) {
-          return { ...pickup, status: 'cancelled' };
-        }
-        return pickup;
-      }));
+      setPickups((current) => current.map((pickup) => (pickup._id === pickupId ? { ...pickup, status: 'cancelled' } : pickup)));
     } catch (error) {
       Alert.alert('Cancel failed', error?.response?.data?.message || 'Please try again.');
     }
@@ -144,18 +481,18 @@ export default function MyPickupsScreen({ navigation }) {
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadPickups} tintColor={PRIMARY_GREEN} />}
       >
-        {pickups.length === 0 ? (
+        {visiblePickups.length === 0 ? (
           <View style={styles.emptyCard}>
             <Text style={styles.emptyEmoji}>🌿</Text>
             <Text style={styles.emptyTitle}>No pickups yet</Text>
-            <Text style={styles.emptyCopy}>Scan your waste and request a pickup to see it here.</Text>
-            <Pressable style={styles.emptyButton} onPress={() => navigation.navigate('UserTabs', { screen: 'Scan' })}>
-              <Text style={styles.emptyButtonText}>Go to scanner</Text>
+            <Text style={styles.emptyCopy}>Capture a photo and request a pickup to see it here.</Text>
+            <Pressable style={styles.emptyButton} onPress={() => navigation.navigate('UserTabs', { screen: 'Call' })}>
+              <Text style={styles.emptyButtonText}>Go to call pickup</Text>
             </Pressable>
           </View>
         ) : null}
 
-        {pickups.map((pickup) => {
+        {visiblePickups.map((pickup) => {
           const status = statusMeta(pickup.status);
 
           return (
@@ -180,6 +517,10 @@ export default function MyPickupsScreen({ navigation }) {
 
               <Text style={styles.noteLabel}>Collector note</Text>
               <Text style={styles.noteText}>{pickup.note || 'No note added.'}</Text>
+
+              {pickup.status === 'accepted' && (pickup.collectorLocation || pickup.collectorId?.location) ? (
+                <PickupRoutePreview pickup={pickup} />
+              ) : null}
 
               {pickup.status === 'pending' ? (
                 <Pressable style={styles.cancelButton} onPress={() => handleCancel(pickup._id)}>
@@ -329,6 +670,113 @@ const styles = StyleSheet.create({
     marginTop: 4,
     color: '#4F6454',
     lineHeight: 20,
+  },
+  liveTrackCard: {
+    marginTop: 14,
+    backgroundColor: '#F2F8F2',
+    borderRadius: 18,
+    padding: 12,
+  },
+  liveTrackHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 10,
+  },
+  liveTrackTitle: {
+    fontWeight: '800',
+    color: '#102313',
+  },
+  liveTrackEta: {
+    color: PRIMARY_GREEN,
+    fontWeight: '800',
+  },
+  liveMapWrap: {
+    overflow: 'hidden',
+    borderRadius: 14,
+  },
+  liveMap: {
+    height: 180,
+  },
+  collectorInfoCard: {
+    marginTop: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+  },
+  collectorInfoTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  collectorAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#E6F4EA',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  collectorInfoCopy: {
+    flex: 1,
+  },
+  collectorName: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#102313',
+  },
+  collectorCompany: {
+    marginTop: 2,
+    color: '#5C6C5D',
+    fontWeight: '600',
+  },
+  collectorEtaChip: {
+    backgroundColor: '#EAF6EB',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+  },
+  collectorEtaChipText: {
+    color: PRIMARY_GREEN,
+    fontWeight: '800',
+  },
+  collectorMetaRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 14,
+  },
+  collectorMetaItem: {
+    flex: 1,
+    backgroundColor: '#F7FAF7',
+    borderRadius: 14,
+    padding: 12,
+  },
+  collectorMetaLabel: {
+    color: '#6B7C6E',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  collectorMetaValue: {
+    marginTop: 6,
+    color: '#102313',
+    fontWeight: '800',
+  },
+  collectorCallButton: {
+    marginTop: 14,
+    backgroundColor: PRIMARY_GREEN,
+    borderRadius: 14,
+    paddingVertical: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  collectorCallButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
   },
   cancelButton: {
     marginTop: 14,

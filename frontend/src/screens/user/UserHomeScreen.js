@@ -101,16 +101,16 @@ export default function UserHomeScreen({ navigation }) {
 
             <View style={styles.actionsGrid}>
               <ActionCard
-                title="Scan Waste"
-                subtitle="Identify and earn points"
+                title="Call Pickup"
+                subtitle="Capture a photo and request a collector"
                 icon="qrcode-scan"
-                onPress={() => navigation.navigate('Scan')}
+                onPress={() => navigation.navigate('Call')}
               />
               <View style={styles.actionRow}>
                 <ActionMini
                   title="Schedule Pickup"
                   icon="truck-delivery-outline"
-                  onPress={() => navigation.navigate('Pickup')}
+                  onPress={() => navigation.navigate('UserTabs', { screen: 'Pickup' })}
                 />
                 <ActionMini
                   title="Redeem Rewards"

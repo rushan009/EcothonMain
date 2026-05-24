@@ -1,5 +1,7 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StatusBar,
@@ -10,39 +12,14 @@ import {
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { GlassCard, ScreenEnter } from '../../components/ui';
+import { endpoints } from '../../api/client';
+import { connectPickupSocket, disconnectPickupSocket } from '../../api/socket';
 import { colors, spacing } from '../../theme/tokens';
 import {
   dashboardTasks,
   CollectorBottomNav,
   styles,
 } from './Shared';
-
-/* ── Local request data ── */
-const REQUESTS = [
-  {
-    id: 'R-201',
-    distance: '1.2',
-    area: 'Green Glen Layout, Sector 4',
-    payout: 450,
-    tags: [
-      { label: 'Paper', icon: 'newspaper-variant-outline' },
-      { label: 'Plastic', icon: 'package-variant-closed' },
-      { label: 'Metal', icon: 'nail' },
-    ],
-    featured: true,
-  },
-  {
-    id: 'R-202',
-    distance: '0.8',
-    area: 'Sunshine Apartment, Block B',
-    payout: 180,
-    tags: [
-      { label: 'Glass', icon: 'glass-fragile' },
-      { label: 'Plastic', icon: 'package-variant-closed' },
-    ],
-    featured: false,
-  },
-];
 
 /* ── Collector name — replace with your auth/context value ── */
 const COLLECTOR_NAME = 'Ramesh Kumar';
@@ -61,6 +38,64 @@ function getInitials(name) {
     .join('')
     .toUpperCase()
     .slice(0, 2);
+}
+
+function timeAgo(inputDate) {
+  const diffMs = Date.now() - new Date(inputDate).getTime();
+  const diffMinutes = Math.max(1, Math.floor(diffMs / 60000));
+
+  if (diffMinutes < 60) {
+    return `${diffMinutes} min ago`;
+  }
+
+  const diffHours = Math.floor(diffMinutes / 60);
+
+  if (diffHours < 24) {
+    return `${diffHours} hr ago`;
+  }
+
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+}
+
+function formatOffer(pickup) {
+  const amount = pickup?.offer?.amount;
+
+  if (Number.isFinite(amount) && amount > 0) {
+    return `Rs ${amount}`;
+  }
+
+  const weightValue = pickup?.estimatedWeight?.value;
+
+  if (Number.isFinite(weightValue) && weightValue > 0) {
+    return `${weightValue} ${pickup?.estimatedWeight?.unit || 'kg'} pending rate`;
+  }
+
+  return 'Offer pending';
+}
+
+function formatWeight(pickup) {
+  const weightValue = pickup?.estimatedWeight?.value;
+
+  if (!Number.isFinite(weightValue) || weightValue <= 0) {
+    return 'Weight unavailable';
+  }
+
+  return `${weightValue} ${pickup?.estimatedWeight?.unit || 'kg'}`;
+}
+
+function upsertPendingRequest(current, nextRequest) {
+  if (!nextRequest?._id) {
+    return current;
+  }
+
+  const rest = current.filter((request) => request._id !== nextRequest._id);
+
+  if (nextRequest.status === 'pending') {
+    return [nextRequest, ...rest];
+  }
+
+  return rest;
 }
 
 /* ── Top Bar with Welcome ── */
@@ -89,7 +124,110 @@ function CollectorTopBar() {
 }
 
 export function CollectorDashboardScreen({ navigation }) {
+  const [requests, setRequests] = useState([]);
   const [online, setOnline] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const loadRequests = useCallback(async ({ silent = false } = {}) => {
+    if (silent) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+
+    try {
+      const response = await endpoints.getPendingNearby();
+      setRequests(response.data?.pickups || []);
+    } catch (error) {
+      Alert.alert('Unable to load requests', error?.response?.data?.message || 'Please try again.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!online) {
+      setRequests([]);
+      setLoading(false);
+      setRefreshing(false);
+      disconnectPickupSocket();
+      return undefined;
+    }
+
+    loadRequests();
+    return undefined;
+  }, [loadRequests, online]);
+
+  useEffect(() => {
+    if (!online) {
+      return undefined;
+    }
+
+    let mounted = true;
+
+    const attachSocket = async () => {
+      const socket = await connectPickupSocket();
+
+      if (!socket || !mounted) {
+        return;
+      }
+
+      const handlePickupUpdate = (pickup) => {
+        setRequests((current) => upsertPendingRequest(current, pickup));
+      };
+
+      const handlePickupCreated = (pickup) => {
+        setRequests((current) => upsertPendingRequest(current, pickup));
+      };
+
+      const handleReconnect = () => {
+        loadRequests({ silent: true });
+      };
+
+      socket.on('pickup_created', handlePickupCreated);
+      socket.on('pickup_status_changed', handlePickupUpdate);
+      socket.on('connect', handleReconnect);
+
+      return () => {
+        socket.off('pickup_created', handlePickupCreated);
+        socket.off('pickup_status_changed', handlePickupUpdate);
+        socket.off('connect', handleReconnect);
+      };
+    };
+
+    attachSocket();
+
+    return () => {
+      mounted = false;
+      disconnectPickupSocket();
+    };
+  }, [loadRequests, online]);
+
+  const liveCount = useMemo(() => requests.length, [requests]);
+
+  const acceptRequest = async (requestId) => {
+    try {
+      await endpoints.acceptPickup(requestId);
+      setRequests((current) => current.filter((request) => request._id !== requestId));
+    } catch (error) {
+      Alert.alert('Could not accept request', error?.response?.data?.message || 'Please try again.');
+    }
+  };
+
+  const declineRequest = async (requestId) => {
+    try {
+      await endpoints.declinePickup(requestId);
+      setRequests((current) => current.filter((request) => request._id !== requestId));
+    } catch (error) {
+      Alert.alert('Could not decline request', error?.response?.data?.message || 'Please try again.');
+    }
+  };
+
+  const openRequestDetails = (request) => {
+    navigation.navigate('CollectorActivePickup', { request });
+  };
 
   return (
     <ScreenEnter>
@@ -157,14 +295,43 @@ export function CollectorDashboardScreen({ navigation }) {
             {/* ── Section Header ── */}
             <View style={styles.sectionHeaderRow}>
               <Text style={styles.sectionTitle}>Nearby Requests</Text>
-              <Text style={styles.sectionMeta}>3 Live</Text>
+              <Text style={styles.sectionMeta}>{liveCount} Live</Text>
             </View>
 
             {/* ── Request Cards ── */}
             <View style={styles.cardStack}>
-              {REQUESTS.map((request) => (
+              {!online ? (
+                <GlassCard style={styles.requestCard}>
+                  <View style={{ alignItems: 'center', paddingVertical: 12 }}>
+                    <MaterialCommunityIcons name="wifi-off" size={28} color={colors.onSurfaceVariant} />
+                    <Text style={{ marginTop: 10, color: colors.onSurfaceVariant, textAlign: 'center' }}>
+                      You are offline. Requests stay hidden until you switch back online.
+                    </Text>
+                  </View>
+                </GlassCard>
+              ) : loading ? (
+                <GlassCard style={styles.requestCard}>
+                  <View style={{ alignItems: 'center', paddingVertical: 12 }}>
+                    <ActivityIndicator color={colors.primary} />
+                    <Text style={{ marginTop: 10, color: colors.onSurfaceVariant }}>Loading live pickup requests…</Text>
+                  </View>
+                </GlassCard>
+              ) : null}
+
+              {online && !loading && requests.length === 0 ? (
+                <GlassCard style={styles.requestCard}>
+                  <View style={{ alignItems: 'center', paddingVertical: 12 }}>
+                    <MaterialCommunityIcons name="clipboard-text-outline" size={28} color={colors.primary} />
+                    <Text style={{ marginTop: 10, color: colors.onSurfaceVariant, textAlign: 'center' }}>
+                      No pending pickups right now. New orders will appear here instantly.
+                    </Text>
+                  </View>
+                </GlassCard>
+              ) : null}
+
+              {requests.map((request) => (
                 <GlassCard
-                  key={request.id}
+                  key={request._id}
                   style={[
                     styles.requestCard,
                     request.featured && styles.requestCardFeatured,
@@ -176,59 +343,93 @@ export function CollectorDashboardScreen({ navigation }) {
                     </View>
                   )}
 
-                  {/* Top row: location + payout */}
-                  <View style={[styles.requestTopRow, request.featured && { marginTop: 8 }]}>
-                    <View style={styles.requestLeft}>
-                      <View style={styles.locationIconWrap}>
-                        <MaterialCommunityIcons
-                          name="map-marker-outline"
-                          size={20}
-                          color={colors.primary}
-                        />
+                  <Pressable onPress={() => openRequestDetails(request)} style={{ marginBottom: 10 }}>
+                    <View style={[styles.requestTopRow, request.featured && { marginTop: 8 }]}>
+                      <View style={styles.requestLeft}>
+                        <View style={styles.locationIconWrap}>
+                          <MaterialCommunityIcons
+                            name="map-marker-outline"
+                            size={20}
+                            color={colors.primary}
+                          />
+                        </View>
+                        <View style={styles.requestTextBlock}>
+                          <Text style={styles.requestDistance}>
+                            {timeAgo(request.createdAt)}
+                          </Text>
+                          <Text style={styles.requestArea} numberOfLines={2}>
+                            {request.location?.address || 'Pickup location unavailable'}
+                          </Text>
+                        </View>
                       </View>
-                      <View style={styles.requestTextBlock}>
-                        <Text style={styles.requestDistance}>
-                          {request.distance} km away
-                        </Text>
-                        <Text style={styles.requestArea}>{request.area}</Text>
+                      <View style={styles.payoutBlock}>
+                        <Text style={styles.payoutLabel}>Estimated Offer</Text>
+                        <Text style={styles.payoutValue}>{formatOffer(request)}</Text>
                       </View>
                     </View>
-                    <View style={styles.payoutBlock}>
-                      <Text style={styles.payoutLabel}>Est. Payout</Text>
-                      <Text style={styles.payoutValue}>Rs {request.payout}</Text>
-                    </View>
-                  </View>
 
-                  {/* Tags */}
-                  <View style={styles.tagRow}>
-                    {request.tags.map((tag) => (
-                      <View
-                        key={`${request.id}-${tag.label}`}
-                        style={styles.tagChip}
-                      >
+                    <View style={styles.tagRow}>
+                      {(request.scrapTypes || []).map((tag) => (
+                        <View
+                          key={`${request._id}-${tag.category}`}
+                          style={styles.tagChip}
+                        >
+                          <MaterialCommunityIcons
+                            name={tag.icon}
+                            size={13}
+                            color={colors.onSurface}
+                          />
+                          <Text style={styles.tagText}>{tag.category}</Text>
+                        </View>
+                      ))}
+                    </View>
+
+                    <View style={styles.tagRow}>
+                      <View style={styles.tagChip}>
                         <MaterialCommunityIcons
-                          name={tag.icon}
+                          name="scale-bathroom"
                           size={13}
                           color={colors.onSurface}
                         />
-                        <Text style={styles.tagText}>{tag.label}</Text>
+                        <Text style={styles.tagText}>{formatWeight(request)}</Text>
                       </View>
-                    ))}
-                  </View>
-
-                  {/* Gradient Accept Button */}
-                  <Pressable
-                    onPress={() => navigation.navigate('CollectorActivePickup')}
-                  >
-                    <LinearGradient
-                      colors={[colors.primary, '#00873a']}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                      style={styles.primaryAction}
-                    >
-                      <Text style={styles.primaryActionText}>Accept Request</Text>
-                    </LinearGradient>
+                      <View style={styles.tagChip}>
+                        <MaterialCommunityIcons
+                          name="phone-outline"
+                          size={13}
+                          color={colors.onSurface}
+                        />
+                        <Text style={styles.tagText}>{request.phone || 'No phone'}</Text>
+                      </View>
+                    </View>
                   </Pressable>
+
+                  <View style={{ gap: 8 }}>
+                    <Pressable onPress={() => acceptRequest(request._id)}>
+                      <LinearGradient
+                        colors={[colors.primary, '#00873a']}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                        style={styles.primaryAction}
+                      >
+                        <Text style={styles.primaryActionText}>Accept Request</Text>
+                      </LinearGradient>
+                    </Pressable>
+
+                    <Pressable
+                      onPress={() => declineRequest(request._id)}
+                      style={{
+                        borderWidth: 1,
+                        borderColor: '#cfe0d4',
+                        borderRadius: 16,
+                        paddingVertical: 12,
+                        alignItems: 'center',
+                        backgroundColor: '#f7faf7',
+                      }}
+                    >
+                      <Text style={{ color: colors.onSurface, fontWeight: '700' }}>Decline Request</Text>
+                    </Pressable>
+                  </View>
                 </GlassCard>
               ))}
             </View>

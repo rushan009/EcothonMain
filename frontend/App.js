@@ -6,7 +6,7 @@ import AppNavigator from './src/navigation/AppNavigator';
 import { OfflineBanner } from './src/components/ui';
 import AuthFlow from './src/screens/auth/AuthFlow';
 import { useEffect, useState } from 'react';
-import { initApi } from './src/api/client';
+import { hydrateStoredAccessToken, initApi } from './src/api/client';
 
 function AppShell() {
   return (
@@ -33,6 +33,7 @@ export default function App() {
     (async () => {
       try {
         await initApi({ timeout: 2000 });
+        await hydrateStoredAccessToken();
       } finally {
         if (mounted) setApiReady(true);
       }

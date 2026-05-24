@@ -1,40 +1,26 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Modal,
   Pressable,
   SafeAreaView,
-  ScrollView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import { endpoints } from '../../api/client';
 
 const PRIMARY_GREEN = '#2E7D32';
 const LIGHT_GREEN = '#A5D6A7';
 const BACKGROUND = '#F9F9F9';
-const CARD_BG = '#FFFFFF';
-const DEFAULT_CATEGORIES = [
-  { category: 'Plastic', icon: '♻️' },
-  { category: 'Paper', icon: '📄' },
-];
 
-const MANUAL_OPTIONS = [
-  { category: 'Plastic', icon: '♻️' },
-  { category: 'Paper', icon: '📄' },
-  { category: 'Metal', icon: '🛠️' },
-  { category: 'E-Waste', icon: '💻' },
-  { category: 'Glass', icon: '🍶' },
-];
+const CARD_BG = '#FFFFFF';
 
 export default function ScanScreen({ navigation }) {
   const [permission, requestPermission] = useCameraPermissions();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [detectedItems, setDetectedItems] = useState([]);
-  const [pickerOpen, setPickerOpen] = useState(false);
   const cameraRef = useRef(null);
 
   useEffect(() => {
@@ -43,12 +29,9 @@ export default function ScanScreen({ navigation }) {
     }
   }, [permission, requestPermission]);
 
-  const detectedLabel = useMemo(() => {
-    return detectedItems.length > 0 ? 'Detected items' : 'Ready to scan';
-  }, [detectedItems]);
-
   const requestCameraAccess = async () => {
     const result = await requestPermission();
+
     if (!result.granted) {
       Alert.alert('Camera permission needed', 'Please allow camera access so you can scan waste items.');
       return false;
@@ -60,58 +43,67 @@ export default function ScanScreen({ navigation }) {
   const handleCapture = async () => {
     const allowed = await requestCameraAccess();
 
-    if (!allowed) {
-      return;
-    }
-
-    if (!cameraRef.current) {
+    if (!allowed || !cameraRef.current) {
       return;
     }
 
     try {
       setIsAnalyzing(true);
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.7, base64: true, skipProcessing: true });
-      const response = await endpoints.classifyWaste({
-        image: photo.base64,
-        mimeType: photo.uri?.endsWith('.png') ? 'image/png' : 'image/jpeg',
+
+      const pickupsResponse = await endpoints.getMyPickups();
+      const activePickup = (pickupsResponse.data?.pickups || []).some((pickup) => ['pending', 'accepted'].includes(pickup.status));
+
+      if (activePickup) {
+        Alert.alert(
+          'One order at a time',
+          'You already have an active pickup request. Please finish it before placing another order.',
+          [
+            { text: 'View pickups', onPress: () => navigation.navigate('Pickup') },
+            { text: 'Cancel' },
+          ],
+        );
+        return;
+      }
+
+      const photo = await cameraRef.current.takePictureAsync({
+        quality: 0.5,
+        base64: false,
+        skipProcessing: true,
       });
 
-      const results = Array.isArray(response.data?.results) && response.data.results.length > 0
-        ? response.data.results
-        : DEFAULT_CATEGORIES;
+      if (!photo?.uri) {
+        throw new Error('Camera did not return an image uri');
+      }
 
-      setDetectedItems(results);
+      const processedPhoto = await manipulateAsync(
+        photo.uri,
+        [{ resize: { width: 1280 } }],
+        { compress: 0.75, format: SaveFormat.JPEG },
+      );
+
+      const formData = new FormData();
+      formData.append('image', {
+        uri: processedPhoto.uri,
+        name: processedPhoto.uri.split('/').pop() || 'pickup-image.jpg',
+        type: 'image/jpeg',
+      });
+
+      const uploadResponse = await endpoints.uploadPickupImage(formData);
+
+      if (!uploadResponse.data?.imageUrl) {
+        throw new Error('Upload did not return an image url');
+      }
+
+      navigation.navigate('RequestPickup', {
+        imageUrl: uploadResponse.data.imageUrl,
+        scrapTypes: [{ category: 'Paper', icon: '📄' }],
+      });
     } catch (error) {
-      console.log('scan error', error);
-      Alert.alert('Scan failed', 'We could not analyze that image. Please try again.');
+      console.log('[scan] capture error', error);
+      Alert.alert('Unable to start pickup', 'We could not save the image. Please try again.');
     } finally {
       setIsAnalyzing(false);
     }
-  };
-
-  const addCategory = (category) => {
-    const nextItem = MANUAL_OPTIONS.find((option) => option.category === category);
-
-    if (!nextItem) {
-      return;
-    }
-
-    setDetectedItems((current) => {
-      const exists = current.some((item) => item.category === nextItem.category);
-      if (exists) {
-        return current;
-      }
-      return [...current, nextItem];
-    });
-  };
-
-  const handleRequestPickup = () => {
-    if (detectedItems.length === 0) {
-      Alert.alert('Add an item', 'Capture an item or choose a category before requesting pickup.');
-      return;
-    }
-
-    navigation.navigate('RequestPickup', { scrapTypes: detectedItems });
   };
 
   if (!permission) {
@@ -130,7 +122,9 @@ export default function ScanScreen({ navigation }) {
         ) : (
           <View style={styles.permissionCard}>
             <Text style={styles.permissionTitle}>Camera access needed</Text>
-            <Text style={styles.permissionBody}>Allow camera permission to scan your recyclables and request a pickup.</Text>
+            <Text style={styles.permissionBody}>
+              Allow camera permission to scan your recyclables and request a pickup.
+            </Text>
             <Pressable style={styles.permissionButton} onPress={requestCameraAccess}>
               <Text style={styles.permissionButtonText}>Allow access</Text>
             </Pressable>
@@ -139,80 +133,31 @@ export default function ScanScreen({ navigation }) {
 
         <View style={styles.overlay} pointerEvents="none">
           <View style={styles.scanFrame} />
-          <Text style={styles.scanHint}>Align the waste in the green frame</Text>
+          <Text style={styles.scanHint}>Capture the waste photo to start a pickup request</Text>
         </View>
 
         <View style={styles.headerBadge}>
-          <Text style={styles.headerBadgeText}>{detectedLabel}</Text>
+          <Text style={styles.headerBadgeText}>Ready to call</Text>
         </View>
 
         <View style={styles.shutterWrap}>
           <Pressable style={styles.shutterButton} onPress={handleCapture} disabled={isAnalyzing}>
-            {isAnalyzing ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <Text style={styles.shutterIcon}>📸</Text>
-            )}
+            {isAnalyzing ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.shutterIcon}>📸</Text>}
           </Pressable>
         </View>
 
         {isAnalyzing ? (
           <View style={styles.analyzingCard}>
             <ActivityIndicator color={PRIMARY_GREEN} />
-            <Text style={styles.analyzingText}>Analyzing waste...</Text>
+            <Text style={styles.analyzingText}>Saving photo...</Text>
           </View>
         ) : null}
       </View>
 
-      {detectedItems.length > 0 ? (
-        <View style={styles.bottomSheet}>
-          <View style={styles.sheetHeaderRow}>
-            <View>
-              <Text style={styles.sheetTitle}>Detected scrap</Text>
-              <Text style={styles.sheetSubtitle}>Tap a chip to confirm or add more items.</Text>
-            </View>
-            <Pressable style={styles.secondaryAction} onPress={() => setPickerOpen(true)}>
-              <Text style={styles.secondaryActionText}>Looks wrong? Add manually</Text>
-            </Pressable>
-          </View>
-
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipRow}>
-            {detectedItems.map((item) => (
-              <View key={`${item.category}-${item.icon}`} style={styles.categoryChip}>
-                <Text style={styles.categoryChipText}>{item.icon} {item.category}</Text>
-              </View>
-            ))}
-          </ScrollView>
-
-          <Pressable style={styles.primaryAction} onPress={handleRequestPickup}>
-            <Text style={styles.primaryActionText}>Request Pickup →</Text>
-          </Pressable>
-        </View>
-      ) : null}
-
-      <Modal visible={pickerOpen} transparent animationType="fade" onRequestClose={() => setPickerOpen(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Add a category</Text>
-            <Text style={styles.modalBody}>Choose the scrap type that best matches your waste.</Text>
-            {MANUAL_OPTIONS.map((option) => (
-              <Pressable
-                key={option.category}
-                style={styles.optionButton}
-                onPress={() => {
-                  addCategory(option.category);
-                  setPickerOpen(false);
-                }}
-              >
-                <Text style={styles.optionButtonText}>{option.icon} {option.category}</Text>
-              </Pressable>
-            ))}
-            <Pressable style={styles.closeButton} onPress={() => setPickerOpen(false)}>
-              <Text style={styles.closeButtonText}>Close</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
+      <View style={styles.helperCard}>
+        <Text style={styles.helperTitle}>Capture your waste photo</Text>
+        <Text style={styles.helperBody}>After the photo is saved, you’ll land on the pickup form where you can confirm the details and place one order at a time.</Text>
+      </View>
     </SafeAreaView>
   );
 }
@@ -299,70 +244,129 @@ const styles = StyleSheet.create({
     color: '#102313',
     fontWeight: '700',
   },
-  bottomSheet: {
+  helperCard: {
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    marginHorizontal: 16,
+    marginTop: 14,
+    marginBottom: 18,
+    padding: 18,
+    borderRadius: 24,
+  },
+  helperTitle: {
+    color: '#102313',
+    fontSize: 18,
+    fontWeight: '800',
+    marginBottom: 6,
+  },
+  helperBody: {
+    color: '#4F6454',
+    fontSize: 14,
+    lineHeight: 20,
+  },
+  resultCardWrap: {
     position: 'absolute',
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(249,249,249,0.98)',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: 18,
-    paddingTop: 18,
+    alignItems: 'center',
     paddingBottom: 24,
-    gap: 14,
   },
-  sheetHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    gap: 12,
-    alignItems: 'flex-start',
+  resultCard: {
+    width: '92%',
+    backgroundColor: 'rgba(255,255,255,0.95)',
+    borderRadius: 32,
+    padding: 24,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.1,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
   },
-  sheetTitle: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#102313',
-  },
-  sheetSubtitle: {
-    color: '#4F6454',
-    marginTop: 4,
-  },
-  secondaryAction: {
-    backgroundColor: '#EAF6EB',
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    borderRadius: 999,
-  },
-  secondaryActionText: {
+  resultIdentified: {
     color: PRIMARY_GREEN,
     fontWeight: '700',
+    fontSize: 14,
+    alignSelf: 'flex-start',
+    marginBottom: 6,
   },
-  chipRow: {
-    gap: 10,
-    paddingBottom: 6,
+  resultRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginBottom: 12,
   },
-  categoryChip: {
-    backgroundColor: '#E8F5E9',
-    borderColor: '#C4E4C7',
-    borderWidth: 1,
-    borderRadius: 999,
+  resultCategory: {
+    fontSize: 28,
+    fontWeight: '800',
+    color: '#102313',
+  },
+  resultPriceBox: {
+    backgroundColor: '#D1FF8A',
+    borderRadius: 16,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 6,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginLeft: 10,
   },
-  categoryChipText: {
-    color: '#12361B',
+  resultPriceLabel: {
+    fontSize: 18,
     fontWeight: '700',
+    color: '#3A6B0B',
+    marginRight: 2,
   },
-  primaryAction: {
+  resultPriceValue: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#3A6B0B',
+  },
+  resultStatsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginTop: 10,
+    marginBottom: 18,
+  },
+  resultStatBox: {
+    backgroundColor: '#F3F7F0',
+    borderRadius: 16,
+    padding: 14,
+    alignItems: 'center',
+    flex: 1,
+    marginHorizontal: 4,
+  },
+  resultStatLabel: {
+    color: '#4F6454',
+    fontWeight: '600',
+    fontSize: 13,
+    marginBottom: 2,
+  },
+  resultStatValue: {
+    color: '#102313',
+    fontWeight: '800',
+    fontSize: 18,
+  },
+  resultPrimaryButton: {
     backgroundColor: PRIMARY_GREEN,
     borderRadius: 16,
-    paddingVertical: 14,
+    paddingVertical: 16,
     alignItems: 'center',
+    width: '100%',
+    marginTop: 18,
+    marginBottom: 8,
   },
-  primaryActionText: {
+  resultPrimaryButtonText: {
     color: '#FFFFFF',
     fontWeight: '800',
-    fontSize: 16,
+    fontSize: 18,
+  },
+  resultConfidence: {
+    color: '#4F6454',
+    fontSize: 13,
+    marginTop: 2,
+    textAlign: 'center',
   },
   permissionCard: {
     flex: 1,

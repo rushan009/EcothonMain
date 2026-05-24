@@ -1,9 +1,11 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 // Simple request logger for debugging API errors (method, path, body)
 app.use((req, res, next) => {
 	try {
